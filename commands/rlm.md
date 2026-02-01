@@ -86,7 +86,7 @@ At the START of every `/rlm` invocation:
 memory_recall(query="RLM analysis of /path/to/project")
 
 # During: Store findings as they emerge
-memory_store(content="Project uses Flask backend on port 5001, React frontend via nginx on 8080", type="fact", importance=7, tags=["rlm", "project-name", "architecture"])
+memory_store(content="Project uses Python backend on port XXXX, React frontend via reverse proxy on port YYYY", type="fact", importance=7, tags=["rlm", "project-name", "architecture"])
 
 # End: Store report location
 memory_store(content="RLM report for project-name at /path/to/rlm_topic_report.md - found 10 issues, 3 critical", type="fact", importance=9, tags=["rlm", "project-name", "report"])

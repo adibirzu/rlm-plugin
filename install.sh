@@ -90,7 +90,14 @@ fi
 
 # Step 5: Update settings.json
 if [ -f "$SETTINGS_FILE" ]; then
+    # Validate existing settings.json is valid JSON
     if command -v python3 &>/dev/null; then
+        if ! python3 -c "import json; json.load(open('$SETTINGS_FILE'))" 2>/dev/null; then
+            error "Existing $SETTINGS_FILE is not valid JSON. Fix it manually before installing."
+        fi
+        # Backup before modifying
+        cp "$SETTINGS_FILE" "$SETTINGS_FILE.backup"
+        info "Backed up settings to $SETTINGS_FILE.backup"
         python3 -c "
 import json
 with open('$SETTINGS_FILE', 'r') as f:

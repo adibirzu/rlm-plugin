@@ -138,11 +138,11 @@ Is this a structural fact about the project?
 
 Is this a critical finding?
   → Yes: memory_store(type="fact", importance=8-9)
-  Example: "CRITICAL: .dockerignore excludes production backend files"
+  Example: "CRITICAL: Build config excludes production application files"
 
 Is this about how components relate?
   → Yes: memory_store(type="relationship", importance=6)
-  Example: "nginx proxies to Flask backend on port 5001"
+  Example: "Reverse proxy forwards /api/* to backend service on internal port"
 
 Is this the final report location?
   → Yes: memory_store(type="fact", importance=8)
@@ -182,18 +182,18 @@ project/
 
 ## Agent: Backend Analysis (sonnet)
 - Found 3 issues in deploy scripts
-- BYPASS_AUTH=true in scripts/deployment/deploy.sh:80
+- Auth bypass flag enabled in deploy script line 80
 - Dead code pattern: set -e + $? check in 3 files
 ...
 
 ## Agent: Frontend Analysis (sonnet)
-- OrdersAudit.tsx:24 hardcodes localhost:5001
-- environmentConfig.ts:72 uses localhost fallback
+- API config hardcodes localhost URL instead of relative path
+- Environment config uses localhost fallback in production
 ...
 
 ## Agent: Docker Pipeline (haiku)
-- .dockerignore excludes enhanced_*.py (7 patterns)
-- nginx.conf missing worker_processes directive
+- Build ignore file excludes production application files
+- Web server config missing required top-level directive
 ...
 ```
 

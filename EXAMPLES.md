@@ -1,4 +1,4 @@
-# RLM v2.0 Skill Examples
+# RLM v2.1 Skill Examples
 
 Detailed examples of using the `/rlm` skill with Opus 4.5 enhancements.
 
@@ -8,7 +8,7 @@ Detailed examples of using the `/rlm` skill with Opus 4.5 enhancements.
 
 **Command**:
 ```
-/rlm "Do a full review of the project, check why the GCP publish script is not working properly, and correct it. Create a report with rlm_gcpdeploy_report.md" ~/projects/transport-app
+/rlm "Do a full review of the project, check deployment pipeline issues, and fix them. Create a report." ~/projects/my-app
 ```
 
 **What RLM Does**:
@@ -38,15 +38,15 @@ Found 10 critical bugs preventing successful deployment...
 
 ## Findings
 
-### [CRITICAL] .dockerignore Excluded Production Backend Files
+### [CRITICAL] Build Config Excluded Production Files
 - **Location**: .dockerignore:93-101
-- **Description**: Patterns like `backend/enhanced_*.py` excluded the main app
-- **Impact**: Container runs in legacy mode
+- **Description**: Glob patterns excluded required application files from Docker build
+- **Impact**: Container runs in degraded mode without key features
 - **Confidence**: High
 
-### [CRITICAL] nginx.conf Missing worker_processes
+### [CRITICAL] Web Server Missing Required Directive
 - **Location**: nginx.conf:1
-- **Impact**: nginx refuses to start
+- **Impact**: Web server refuses to start inside container
 - **Confidence**: High
 ...
 ```
