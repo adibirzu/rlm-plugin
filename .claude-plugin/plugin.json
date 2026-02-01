@@ -1,0 +1,8 @@
+{
+  "name": "rlm",
+  "description": "Recursive Language Model (RLM) v2.1 — Claude Opus 4.5 enhanced with memory persistence, token-aware processing, and multi-agent orchestration",
+  "version": "2.1.0",
+  "author": {
+    "name": "User"
+  }
+}
