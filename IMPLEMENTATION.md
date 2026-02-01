@@ -1,4 +1,4 @@
-# RLM v2.1 Implementation Guide
+# RLM v3.0 Implementation Guide
 
 ## Architecture Overview
 
@@ -6,100 +6,215 @@
 /rlm invocation
     |
     v
-Phase 1: Assessment
-    ├── memory_recall (prior analysis?)
-    ├── Glob (file count by type)
-    ├── Task classification
-    └── Strategy selection
+Phase 0: Mode Detection
+    ├── Parse task description for trigger keywords
+    ├── Quick Scan: "find", "where is", "list", "show me", "how many"
+    └── Deep Audit: "review", "audit", "analyze", "compare", "summarize"
     |
-    v
-Phase 2: Exploration
-    ├── Read with limit (peek)
-    ├── Grep count mode (sizing)
-    ├── Write .rlm/scan_results.md
-    └── memory_store (project structure)
-    |
-    v
-Phase 3: Decomposition
-    ├── Parallel Task agents (haiku/sonnet)
-    │   ├── Each agent processes bounded scope
-    │   └── Results collected as summaries
-    └── Append to .rlm/agent_findings.md
-    |
-    v
-Phase 4: Synthesis
-    ├── Read .rlm/agent_findings.md (if compacted)
-    ├── Deduplicate + cross-reference
-    ├── Confidence assessment
-    └── Write .rlm/synthesis.md
-    |
-    v
-Phase 5: Output
-    ├── Write rlm_*_report.md
-    ├── memory_store (summary + report path)
-    └── Present concise findings to user
+    v (Quick Scan)                    v (Deep Audit)
+Quick Scan Pipeline                 Phase 1: Assessment
+├── memory_recall                   ├── memory_recall (prior analysis?)
+├── Grep (head_limit:50)            ├── CLAUDE.md check
+├── Read top hits (limit:100)       ├── Git status (incremental check)
+└── Inline answer                   ├── Glob (file count by type)
+                                    ├── Background inventory (if >500 files)
+                                    └── Strategy selection
+                                    |
+                                    v
+                                  Phase 2: Exploration
+                                    ├── Peek entry points (limit:50)
+                                    ├── Grep count mode (sizing)
+                                    ├── Create .rlm/<date>/ directory
+                                    ├── Write scan_results.md
+                                    └── memory_store (project structure)
+                                    |
+                                    v
+                                  Phase 3: Decomposition
+                                    ├── Calculate adaptive budgets
+                                    ├── Parallel Task agents (FINAL protocol)
+                                    │   ├── Max 500 files / 50K lines per agent
+                                    │   └── Structured findings output
+                                    └── Append to agent_findings.md
+                                    |
+                                    v
+                                  Phase 4: Synthesis
+                                    ├── Read agent_findings.md (if compacted)
+                                    ├── Parse FINAL-format findings
+                                    ├── Deduplicate by file:line
+                                    ├── Cross-reference + rank severity
+                                    └── Write synthesis.md
+                                    |
+                                    v
+                                  Phase 5: Output
+                                    ├── Write rlm_*_report.md
+                                    ├── memory_store (summary + commit SHA)
+                                    ├── Cleanup old checkpoints (>7 days)
+                                    ├── Auto-add .rlm/ to .gitignore
+                                    └── Present concise findings to user
 ```
+
+## Dual Execution Modes (E1)
+
+### Quick Scan Mode
+- **Triggers**: "find", "where is", "list", "show me", "how many", "which files", "what is"
+- **Token budget**: ~5-10K tokens total
+- **Pipeline**: memory_recall -> Grep (head_limit:50) -> Read top hits (limit:100) -> inline answer
+- **No**: checkpoints, report file, sub-agents (unless escalated), memory_store
+
+### Deep Audit Mode
+- **Triggers**: "review", "audit", "analyze", "compare", "summarize", "check", "security", "refactor", "assess", "examine", or complex multi-part requests
+- **Token budget**: ~30-60K tokens total
+- **Pipeline**: Full Phase 0-5 with checkpoints, memory, sub-agents, and report file
+
+### Mode Escalation
+Quick Scan can escalate to Deep Audit when:
+- Grep count reveals >100 matches across >50 files
+- Task complexity exceeds single-pass analysis
+- User request contains multiple sub-tasks
+
+## Directory Pruning (E2)
+
+### Default Exclude List
+Always excluded from Glob and Grep operations:
+```
+.git, node_modules, .venv, venv, __pycache__, .pytest_cache,
+dist, build, .next, .nuxt, .cache, .parcel-cache,
+coverage, .nyc_output, .tox, .eggs, *.egg-info,
+vendor (if not primary code), bower_components, jspm_packages
+```
+
+### Implementation
+- Grep: Use `glob` parameter to exclude (e.g., `glob: "!node_modules/**"`)
+- Grep: Use `type` parameter to target source files (e.g., `type: "py"`, `type: "ts"`)
+- Glob: Prefer specific patterns (`src/**/*.ts`) over broad patterns (`**/*.ts`)
+
+## Binary File Filtering (E9)
+
+### Skip List
+Never Read or Grep these extensions:
+```
+Images:   .jpg, .jpeg, .png, .gif, .bmp, .ico, .svg, .webp, .tiff
+Fonts:    .woff, .woff2, .ttf, .otf, .eot
+Compiled: .pyc, .pyo, .class, .o, .so, .dylib, .dll, .exe, .wasm
+Archives: .zip, .tar, .gz, .bz2, .xz, .rar, .7z, .jar, .war
+Media:    .mp3, .mp4, .wav, .avi, .mov, .flv, .webm
+Data:     .sqlite, .db, .bin, .dat, .pkl, .npy, .h5, .parquet
+Maps:     .map (source maps)
+Locks:    package-lock.json, yarn.lock, pnpm-lock.yaml, Pipfile.lock, poetry.lock
+```
+
+### Enforcement
+- Use `type` parameter in Grep to auto-filter to source files
+- Pre-check file extensions before Read operations
+- Glob patterns should exclude binary extensions
+
+## Git-Aware Incremental Analysis (E3)
+
+### Workflow
+```
+1. memory_recall("RLM analysis of <project-path>")
+   → Extract: last commit SHA, report path, findings count
+
+2. git -C <path> log --oneline -1  → current HEAD SHA
+   git -C <path> diff --name-only <last-sha>..HEAD → changed files
+
+3. Decision:
+   - No prior analysis → Full analysis
+   - >50% files changed → Full analysis
+   - <50% files changed → Incremental (changed files + importers)
+   - 0 files changed → "No changes since last analysis"
+
+4. After analysis:
+   memory_store(
+     content="RLM analysis of <path> at commit <SHA>. Report: <path>. Files: N. Findings: N",
+     type="fact", importance=8, tags=["rlm", "<project>", "commit"]
+   )
+```
+
+### Incremental Report Format
+```markdown
+## Changes Since Last Analysis (commit abc123..def456)
+### New Issues (N)
+...
+### Resolved Issues (N)
+...
+### Unchanged Issues (N)
+(see previous report at rlm_topic_report.md)
+```
+
+## CLAUDE.md Awareness (E5)
+
+### Purpose
+Skip redundant structure discovery when project documentation exists.
+
+### Workflow
+```
+1. Glob: <project-path>/CLAUDE.md
+2. If found: Read (limit: 200)
+3. Extract: tech stack, key directories, build commands, conventions
+4. Use to inform strategy selection — skip Peeking phase if sufficient
+```
+
+### Token Savings
+- Without CLAUDE.md: Full Peek phase (~15K tokens)
+- With CLAUDE.md: Read CLAUDE.md (~4K tokens) + skip structure discovery
 
 ## Token Budget System
 
-### Why Token Management Matters
+### Budget Rules
 
-The main conversation has a finite context window. Every tool result (Read, Grep, sub-agent output) consumes tokens. Without discipline, an RLM analysis can fill the context with intermediate data, leaving no room for synthesis.
+| Action | Token Cost | When to Use |
+|--------|-----------|-------------|
+| `Glob` | ~10 tokens/file | Always safe, use freely |
+| `Grep` count mode | ~10 tokens/file | Size the problem first |
+| `Grep` files_with_matches | ~30 tokens/file | Find relevant files |
+| `Grep` content, `head_limit: 50` | ~2K tokens | Targeted extraction |
+| `Read` with `limit: 100` | ~4K tokens | Peeking |
+| `Read` full file (500 lines) | ~20K tokens | Only critical files <300 lines |
+| `Task` sub-agent | 0 tokens in parent | Bulk analysis (>200 lines) |
 
-### Token Cost Reference
+### Key Rules
+- **>200 lines from a file** -> delegate to Task sub-agent
+- **Always count before content**: Grep count mode first
+- **Cap all Grep**: head_limit: 20 (discovery), 50 (extraction), 100 (max)
+- **Read discipline**: Peek (limit:50-100), Section (limit:200 + offset), Full (only if <300 lines and critical)
 
-| Tool Call | Approximate Tokens | Example |
-|-----------|-------------------|---------|
-| `Glob("**/*.py")` on 50 files | ~500 | File discovery |
-| `Grep(count mode)` on 50 files | ~500 | Sizing |
-| `Grep(files_with_matches)` 20 results | ~600 | File filtering |
-| `Grep(content, head_limit:50)` | ~2,000 | Targeted content |
-| `Read(limit:50)` | ~2,000 | Quick peek |
-| `Read(limit:200)` | ~8,000 | Section read |
-| `Read(full, 500-line file)` | ~20,000 | Full file |
-| `Read(full, 2000-line file)` | ~80,000 | Dangerous — use sub-agent |
-| `Task(sub-agent)` result | ~500-2,000 | Summary returned |
-
-### Budget Strategy
-
-**Target**: Keep main conversation under 100K tokens during RLM execution.
-
+### Budget Allocation (Deep Audit)
 ```
-Budget allocation:
-- Assessment: ~5K tokens (Globs + Grep counts)
-- Exploration: ~15K tokens (3-4 peeks + targeted greps)
-- Decomposition: ~10K tokens (sub-agent summaries only)
-- Synthesis: ~5K tokens (internal reasoning)
-- Output: ~5K tokens (report to user)
-Total: ~40K tokens (well within budget)
+Assessment:     ~5K tokens  (Globs + Grep counts + CLAUDE.md)
+Exploration:   ~15K tokens  (3-4 peeks + targeted greps)
+Decomposition: ~10K tokens  (sub-agent summaries only)
+Synthesis:      ~5K tokens  (internal reasoning)
+Output:         ~5K tokens  (report to user)
+Total:         ~40K tokens  (target ceiling)
 ```
 
 ### Token-Saving Patterns
 
 **Pattern 1: Count before content**
 ```
-# Bad: Grep content on unknown result set — could return 10K lines
+# Bad: Unknown result set size
 Grep(pattern="TODO", output_mode="content")
 
-# Good: Count first, then fetch bounded content
-Grep(pattern="TODO", output_mode="count")        # → 847 matches in 42 files
-Grep(pattern="TODO", output_mode="content", head_limit=30)  # → top 30 matches
+# Good: Count first, then bounded fetch
+Grep(pattern="TODO", output_mode="count")        # → 847 matches
+Grep(pattern="TODO", output_mode="content", head_limit=30)
 ```
 
 **Pattern 2: Delegate bulk reads**
 ```
-# Bad: Read 2000-line file in main context (80K tokens!)
+# Bad: 2000-line file in main context (80K tokens!)
 Read("/path/to/large_file.py")
 
-# Good: Delegate to sub-agent (0 tokens in parent)
+# Good: Sub-agent (0 tokens in parent)
 Task(subagent_type="Explore", model="haiku",
-     prompt="Read /path/to/large_file.py and summarize all function signatures and their purposes")
+     prompt="Read /path/to/large_file.py and list all function signatures")
 # Returns ~500 token summary
 ```
 
 **Pattern 3: Progressive narrowing**
 ```
-# Bad: Read all files immediately
+# Bad: Read all files
 for f in files: Read(f)
 
 # Good: Narrow first
@@ -107,95 +222,144 @@ Grep(pattern="authenticate", output_mode="files_with_matches")  # → 5 files
 # Now only read the 5 relevant files
 ```
 
+## Adaptive Sub-Agent Budgets (E8)
+
+### Scope Limits
+```
+Max per agent: 500 files OR 50K lines
+Target per agent: 5-15 files OR 5-30K lines
+```
+
+### Auto-Split Logic
+```
+1. Estimate scope: number_of_files x avg_lines_per_file
+2. If scope > 50K lines: split into ceil(scope / 30K) agents
+3. If files > 500: split by directory
+4. Each split gets its own Task agent with bounded scope
+```
+
+### Example
+```
+2,500 files total → prune to 2,000 → split into 8 agents (~250 files each)
+Each agent processes its partition independently
+Results merged in Phase 4
+```
+
+## Background Scanning (E7)
+
+### Trigger
+Phase 1 Glob count reveals >500 files.
+
+### Implementation
+```
+1. Launch inventory agents with run_in_background: true
+   Task(subagent_type="Explore", model="haiku", run_in_background=true,
+        prompt="List all source files in <path>/src with line counts.")
+
+2. Continue Phase 1 assessment in main conversation
+
+3. Collect results with TaskOutput or Read(output_file) before Phase 3
+```
+
+### Benefit
+Overlaps inventory with assessment, reducing wall-clock time by 20-30%.
+
+## FINAL Output Protocol (E6)
+
+### Required Format for All Sub-Agents
+Every sub-agent prompt must include:
+
+```
+Return your findings in this EXACT format:
+
+## FINDINGS: <count>
+
+### [CRITICAL/HIGH/MEDIUM/LOW] <Title>
+- **File**: <path>:<line>
+- **Evidence**: <what you found>
+- **Impact**: <why it matters>
+
+(repeat for each finding)
+
+## SUMMARY
+<1-2 sentence summary>
+
+Do NOT include reasoning, exploration steps, or intermediate thoughts.
+Only report confirmed findings with evidence.
+```
+
+### Benefits
+- Machine-parseable sub-agent results
+- Clean deduplication across agents (match by file:line)
+- No intermediate reasoning leaking into findings
+- Consistent severity classification (CRITICAL/HIGH/MEDIUM/LOW)
+
+## Timestamped Checkpoints (E4)
+
+### Directory Structure
+```
+project/
+├── .rlm/
+│   ├── 2026-02-01/
+│   │   ├── scan_results.md      ← Phase 2 output
+│   │   ├── agent_findings.md    ← Phase 3 output (append per agent)
+│   │   └── synthesis.md         ← Phase 4 output
+│   └── 2026-01-25/              ← previous run (auto-cleanup if >7 days)
+├── rlm_topic_report.md          ← Phase 5 final report
+└── .gitignore                   ← should contain .rlm/
+```
+
+### Cleanup Rule
+Before creating a new checkpoint:
+```bash
+find <project>/.rlm -maxdepth 1 -type d -mtime +7 -exec rm -rf {} +
+```
+
+### Recovery After Compaction
+If conversation was compacted mid-analysis:
+```
+Read: <project>/.rlm/<date>/agent_findings.md
+```
+This recovers all sub-agent findings for synthesis.
+
+### Auto-Gitignore
+After creating `.rlm/`:
+```bash
+grep -q "^\.rlm/$" <project>/.gitignore 2>/dev/null || echo ".rlm/" >> <project>/.gitignore
+```
+
 ## Memory Integration
 
 ### MCP Memory Tools
-
-The plugin uses two MCP tools:
-- `memory_store(content, type, importance, tags)` — Persist a finding
-- `memory_recall(query, limit, max_tokens)` — Retrieve past findings
+- `memory_store(content, type, importance, tags)` — persist findings
+- `memory_recall(query, limit, max_tokens)` — retrieve past findings
 
 ### Memory Lifecycle
 
 ```
 Session 1: /rlm "review project" ~/project
-  → memory_store("~/project is a Flask+React app with 120 files...", type="fact", tags=["rlm","project"])
-  → memory_store("Report at ~/project/rlm_review_report.md — 5 critical findings", type="fact", tags=["rlm","project","report"])
+  Phase 1: memory_recall("RLM analysis of ~/project")  → empty
+  Phase 2: memory_store("~/project is Flask+React, 120 files", type="fact", tags=["rlm","project"])
+  Phase 5: memory_store("Report at rlm_review_report.md, commit abc123, 5 findings", type="fact", importance=9)
 
-Session 2: /rlm "check security" ~/project
-  → memory_recall("RLM analysis of ~/project")
-  → Gets back: "Flask+React app, 120 files, previous report at rlm_review_report.md"
-  → Skips structure analysis, goes straight to security grep patterns
-  → Reads previous report for context on what was already found
+Session 2: /rlm "check what changed" ~/project
+  Phase 0: memory_recall → gets Flask+React structure + commit abc123
+  Phase 1: git diff abc123..HEAD → 5 files changed
+  → Incremental mode: analyzes 5 files only
+  Phase 5: memory_store with new commit SHA
 ```
 
-### What to Store (Decision Tree)
+### What to Store
 
-```
-Is this a structural fact about the project?
-  → Yes: memory_store(type="fact", importance=7)
-  Example: "Uses Clean Architecture with Repository Pattern"
+| When | Content | Type | Importance |
+|------|---------|------|------------|
+| After Phase 1 | Project structure + tech stack | `fact` | 7 |
+| After findings | Critical findings with locations | `fact` | 8 |
+| After report | Executive summary + report path + commit SHA | `fact` | 9 |
+| Architecture | Module/service relationships | `relationship` | 6 |
 
-Is this a critical finding?
-  → Yes: memory_store(type="fact", importance=8-9)
-  Example: "CRITICAL: Build config excludes production application files"
-
-Is this about how components relate?
-  → Yes: memory_store(type="relationship", importance=6)
-  Example: "Reverse proxy forwards /api/* to backend service on internal port"
-
-Is this the final report location?
-  → Yes: memory_store(type="fact", importance=8)
-  Example: "RLM report at /path/rlm_topic_report.md"
-```
-
-## Compaction Resilience System
-
-### The Problem
-
-Claude Code automatically summarizes long conversations to stay within context limits. When this happens, intermediate RLM results (sub-agent findings, grep outputs) are lost. The synthesis phase has nothing to work with.
-
-### The Solution: `.rlm/` Checkpoint Files
-
-```
-project/
-├── .rlm/
-│   ├── scan_results.md      ← Phase 2 output
-│   ├── agent_findings.md    ← Phase 3 output (appended per agent)
-│   └── synthesis.md         ← Phase 4 output
-├── rlm_topic_report.md      ← Phase 5 final report
-└── ...project files...
-```
-
-### How It Works
-
-1. **Phase 2**: Write exploration results to `.rlm/scan_results.md`
-2. **Phase 3**: After each sub-agent returns, append its findings to `.rlm/agent_findings.md`
-3. **If compaction occurs**: Read `.rlm/agent_findings.md` to recover all sub-agent results
-4. **Phase 4**: Write synthesis to `.rlm/synthesis.md`
-5. **Phase 5**: Generate report from synthesis
-
-### Checkpoint Format
-
-```markdown
-# .rlm/agent_findings.md
-
-## Agent: Backend Analysis (sonnet)
-- Found 3 issues in deploy scripts
-- Auth bypass flag enabled in deploy script line 80
-- Dead code pattern: set -e + $? check in 3 files
-...
-
-## Agent: Frontend Analysis (sonnet)
-- API config hardcodes localhost URL instead of relative path
-- Environment config uses localhost fallback in production
-...
-
-## Agent: Docker Pipeline (haiku)
-- Build ignore file excludes production application files
-- Web server config missing required top-level directive
-...
-```
+### Memory Tags
+Always include: `["rlm", "<project-directory-name>"]` plus topic-specific tags.
 
 ## Sub-Agent Orchestration
 
@@ -213,9 +377,7 @@ project/
 | Cross-file tracing | `general-purpose` | default |
 
 ### Prompt Economy
-
-Sub-agent prompts should be under 500 words. Structure:
-
+Sub-agent prompts should be under 500 words:
 ```
 You are analyzing [scope] for [task].
 
@@ -227,28 +389,26 @@ Look for:
 1. [Specific thing 1]
 2. [Specific thing 2]
 
-Return a concise summary of findings with file:line references.
+[FINAL protocol format here]
+
 Do NOT read files outside the listed scope.
 ```
 
-### Parallel Launch Pattern
-
+### Parallel Launch
 Always launch independent agents in a single message:
-
 ```
-# Single message with 3 parallel Task calls:
-Task(subagent_type="Explore", model="haiku", prompt="Inventory all .py files in backend/")
-Task(subagent_type="Explore", model="haiku", prompt="Inventory all .tsx files in src/")
-Task(subagent_type="Explore", model="haiku", prompt="List all deploy scripts and their purposes")
+Task(subagent_type="Explore", model="haiku", prompt="Inventory .py files in backend/")
+Task(subagent_type="Explore", model="haiku", prompt="Inventory .tsx files in src/")
+Task(subagent_type="code-reviewer", prompt="Review deploy scripts for issues")
 ```
 
 ## Strategy Implementation Details
 
 ### Peeking
 ```
-1. Glob for entry points (package.json, main.py, Dockerfile, etc.)
+1. Glob for entry points (package.json, main.py, Dockerfile)
 2. Read first 50 lines of each (limit:50)
-3. Examine directory tree (Bash: ls -la, or Glob for top-level)
+3. Examine directory tree
 4. Decision: which deeper strategy applies?
 Token cost: ~5K
 ```
@@ -264,28 +424,28 @@ Token cost: ~2-5K
 
 ### Partition+Map
 ```
-1. Identify partition boundaries (by directory or by file groups)
-2. Allocate ~5-15 files per agent
-3. Launch all agents in parallel (single message)
-4. Each agent: reads its files, extracts findings, returns summary
-5. Collect summaries, merge, dedup
+1. Identify partition boundaries (directory or file groups)
+2. Calculate adaptive budget per partition
+3. Launch all agents in parallel with FINAL protocol
+4. Each agent: reads files, extracts findings, returns structured output
+5. Collect, merge, deduplicate by file:line
 Token cost: ~10K (summaries only)
 ```
 
 ### Summarization
 ```
-Level 1: haiku agents summarize individual files (1-2 sentences each)
-Level 2: sonnet agent summarizes groups of file summaries
-Level 3: opus synthesizes into executive summary
+Level 1: haiku agents summarize individual files
+Level 2: sonnet agent summarizes groups
+Level 3: opus synthesizes executive summary
 Token cost: ~8K (progressive reduction)
 ```
 
 ### Iterative Refinement
 ```
-Pass 1: Grep count + files_with_matches → identify hot spots (~3K tokens)
-Pass 2: Sub-agents deep-dive on hot spots → findings (~5K tokens)
-Pass 3: Targeted Read on flagged locations → verify (~5K tokens)
-Pass 4: Cross-validate against tests/docs → confidence (~3K tokens)
+Pass 1: Grep count + files_with_matches → hot spots (~3K)
+Pass 2: Sub-agents deep-dive on hot spots → findings (~5K)
+Pass 3: Targeted Read on flagged locations → verify (~5K)
+Pass 4: Cross-validate against tests/docs → confidence (~3K)
 Total: ~16K tokens
 ```
 
@@ -300,10 +460,10 @@ Token cost: ~10K
 
 ### Adaptive Context Selection
 ```
-Step 1: Grep count mode per file → relevance score
+Step 1: Grep count per file → relevance score
 Step 2: Sort files by score descending
-Step 3: Read top N files within token budget
-Step 4: Skip zero-score files
+Step 3: Read top N within token budget
+Step 4: Skip zero-score and binary files
 Token cost: ~2K (counting) + variable (reads)
 ```
 
@@ -311,21 +471,25 @@ Token cost: ~2K (counting) + variable (reads)
 
 | Error | Recovery |
 |-------|----------|
-| Sub-agent empty result | Broaden search patterns, check file paths |
-| Too many files (>500) | Apply Adaptive Context Selection first |
-| Context filling up | Delegate more to sub-agents, increase head_limit discipline |
-| Compaction during analysis | Read `.rlm/` checkpoint files to recover |
+| Sub-agent empty result | Retry with broader scope or escalate model (haiku → sonnet) |
+| Too many files (>500) | Apply directory pruning + adaptive budgets |
+| Context filling up | Delegate more to sub-agents, tighten head_limit |
+| Compaction during analysis | Read `.rlm/<date>/` checkpoint files to recover |
 | Conflicting findings | Launch verification sub-agent with targeted reads |
-| Memory recall empty | First analysis of this project — proceed normally |
+| Memory recall empty | First analysis — proceed with full pipeline |
+| Quick Scan overwhelmed | Escalate to Deep Audit mode |
 
-## Adding the Plugin to .gitignore
+## Strategy Selection Matrix
 
-If using `.rlm/` in a git repository, add to `.gitignore`:
-
-```
-# RLM intermediate files
-.rlm/
-```
+| Task Type | Primary | Secondary |
+|-----------|---------|-----------|
+| "Find X" | Grepping | Peek |
+| "Analyze X" | Partition+Map | Iterative Refinement |
+| "Summarize X" | Summarization | Peek |
+| "Audit X" | Iterative Refinement | Cross-Reference |
+| "Compare X vs Y" | Partition+Map | Cross-Reference |
+| "Debug X" | Grepping | Iterative Refinement |
+| "Review X" | Iterative Refinement | Partition+Map |
 
 ## References
 

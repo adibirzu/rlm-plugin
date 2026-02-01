@@ -1,5 +1,5 @@
 #!/bin/bash
-# RLM Plugin Installer v2.1.0
+# RLM Plugin Installer v3.0.0
 # Installs the RLM plugin for Claude Code and enables it in settings.
 #
 # Usage:
@@ -57,7 +57,7 @@ except Exception as e:
 # Handle --uninstall flag
 [ "${1:-}" = "--uninstall" ] && uninstall
 
-echo "Installing RLM Plugin v2.1.0 for Claude Code..."
+echo "Installing RLM Plugin v3.0.0 for Claude Code..."
 echo ""
 
 # Step 1: Verify source files exist
