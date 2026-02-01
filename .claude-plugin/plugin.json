@@ -3,6 +3,18 @@
   "description": "Recursive Language Model (RLM) v3 — dual-mode execution, git-aware incremental analysis, memory persistence, token-aware processing, FINAL protocol, adaptive budgets",
   "version": "3.0.0",
   "author": {
-    "name": "User"
-  }
+    "name": "adibirzu"
+  },
+  "repository": "https://github.com/adibirzu/rlm-plugin",
+  "homepage": "https://github.com/adibirzu/rlm-plugin#readme",
+  "license": "MIT",
+  "keywords": [
+    "rlm",
+    "recursive-language-models",
+    "claude-code",
+    "code-review",
+    "code-analysis",
+    "multi-agent",
+    "token-optimization"
+  ]
 }
