@@ -17,11 +17,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
 info()  { echo -e "${GREEN}[OK]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+step()  { echo -e "${CYAN}[STEP]${NC} $1"; }
 
 uninstall() {
     echo "Uninstalling RLM plugin..."
@@ -82,13 +84,65 @@ for f in README.md IMPLEMENTATION.md EXAMPLES.md install.sh; do
 done
 info "Plugin files copied to $PLUGIN_DIR"
 
-# Step 4: Clear old cache (will be regenerated on Claude Code restart)
+# Step 4: Set up cache directory (Claude Code reads plugin files from here)
+PLUGIN_VERSION="3.0.0"
+INSTALLED_FILE="$HOME/.claude/plugins/installed_plugins.json"
+CACHE_VERSION_DIR="$CACHE_DIR/$PLUGIN_VERSION"
 if [ -d "$CACHE_DIR" ]; then
     rm -rf "$CACHE_DIR"
-    info "Old cache cleared (will regenerate on restart)"
+fi
+mkdir -p "$CACHE_VERSION_DIR/.claude-plugin"
+mkdir -p "$CACHE_VERSION_DIR/commands"
+cp "$SCRIPT_DIR/.claude-plugin/plugin.json" "$CACHE_VERSION_DIR/.claude-plugin/"
+cp "$SCRIPT_DIR/commands/rlm.md" "$CACHE_VERSION_DIR/commands/"
+for f in README.md IMPLEMENTATION.md EXAMPLES.md install.sh; do
+    [ -f "$SCRIPT_DIR/$f" ] && cp "$SCRIPT_DIR/$f" "$CACHE_VERSION_DIR/"
+done
+info "Cache populated at $CACHE_VERSION_DIR"
+
+# Step 5: Register in installed_plugins.json
+step "Registering plugin..."
+if command -v python3 &>/dev/null; then
+    mkdir -p "$(dirname "$INSTALLED_FILE")"
+    [ -f "$INSTALLED_FILE" ] && cp "$INSTALLED_FILE" "$INSTALLED_FILE.backup"
+    python3 -c "
+import json, os
+from datetime import datetime, timezone
+
+installed_file = '$INSTALLED_FILE'
+plugin_name = 'rlm@local-plugins'
+cache_path = '$CACHE_VERSION_DIR'
+version = '$PLUGIN_VERSION'
+
+if os.path.exists(installed_file):
+    with open(installed_file, 'r') as f:
+        data = json.load(f)
+else:
+    data = {'version': 2, 'plugins': {}}
+
+plugins = data.setdefault('plugins', {})
+now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+
+plugins[plugin_name] = [{
+    'scope': 'user',
+    'installPath': cache_path,
+    'version': version,
+    'installedAt': now,
+    'lastUpdated': now
+}]
+
+with open(installed_file, 'w') as f:
+    json.dump(data, f, indent=2)
+    f.write('\n')
+print('Plugin registered in installed_plugins.json')
+"
+    info "Plugin registered"
+else
+    warn "python3 not found. Manually register the plugin in $INSTALLED_FILE"
 fi
 
-# Step 5: Update settings.json
+# Step 6: Enable in settings.json
+step "Enabling plugin..."
 if [ -f "$SETTINGS_FILE" ]; then
     # Validate existing settings.json is valid JSON
     if command -v python3 &>/dev/null; then
@@ -120,7 +174,7 @@ else
     info "Created settings.json with plugin enabled"
 fi
 
-# Step 6: Verify
+# Step 7: Verify
 echo ""
 echo "Installation complete!"
 echo ""
