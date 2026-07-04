@@ -2,6 +2,16 @@
 
 All notable changes to the RLM Plugin are documented in this file.
 
+## [3.1.1] - 2026-07-04
+
+### Added
+- Native `.codex-plugin/plugin.json` packaging and Codex UI metadata
+- Cross-platform tests that keep Claude Code and Codex manifests on the same version
+
+### Changed
+- Simplified shared skill frontmatter to fields accepted by both Claude Code and Codex
+- Documented installation and invocation in both plugin hosts
+
 ## [3.1.0] - 2026-07-04
 
 ### Added

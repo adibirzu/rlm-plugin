@@ -31,9 +31,19 @@ class PluginPackageTests(unittest.TestCase):
         manifest = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
 
         self.assertEqual(manifest["name"], "rlm")
-        self.assertEqual(manifest["version"], "3.1.0")
+        self.assertEqual(manifest["version"], "3.1.1")
         self.assertTrue((ROOT / "skills/rlm/SKILL.md").is_file())
         self.assertFalse((ROOT / "commands/rlm.md").exists())
+
+    def test_codex_manifest_matches_shared_plugin(self):
+        claude = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
+        codex = json.loads((ROOT / ".codex-plugin/plugin.json").read_text())
+
+        self.assertEqual(codex["name"], "rlm")
+        self.assertEqual(codex["version"], claude["version"])
+        self.assertEqual(codex["skills"], "./skills/")
+        self.assertEqual(codex["interface"]["displayName"], "Recursive Language Model")
+        self.assertTrue(codex["interface"]["defaultPrompt"])
 
     def test_skill_has_portable_and_safe_fallbacks(self):
         skill = (ROOT / "skills/rlm/SKILL.md").read_text()
@@ -52,6 +62,8 @@ class PluginPackageTests(unittest.TestCase):
 
         self.assertNotIn("rm -rf", skill)
         self.assertNotIn("TaskOutput", skill)
+        self.assertNotIn("argument-hint:", skill)
+        self.assertNotIn("disable-model-invocation:", skill)
 
     def test_documented_versions_match_manifest(self):
         manifest = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())

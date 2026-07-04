@@ -1,0 +1,37 @@
+{
+  "name": "rlm",
+  "version": "3.1.1",
+  "description": "Recursive, evidence-backed analysis for repositories and large document sets with safe capability fallbacks",
+  "author": {
+    "name": "adibirzu",
+    "url": "https://github.com/adibirzu"
+  },
+  "homepage": "https://github.com/adibirzu/rlm-plugin#readme",
+  "repository": "https://github.com/adibirzu/rlm-plugin",
+  "license": "MIT",
+  "keywords": [
+    "rlm",
+    "recursive-language-models",
+    "code-review",
+    "security-review",
+    "large-context"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Recursive Language Model",
+    "shortDescription": "Analyze repositories with recursive, bounded exploration.",
+    "longDescription": "RLM maps large repositories and document sets, partitions independent work, validates evidence, and synthesizes concise findings with coverage limits.",
+    "developerName": "adibirzu",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Review this repository with RLM and prioritize confirmed findings.",
+      "Trace this change across callers, tests, and configuration.",
+      "Audit this project for security, reliability, and missing tests."
+    ]
+  }
+}

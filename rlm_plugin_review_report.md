@@ -4,7 +4,7 @@
 
 **Reviewed version:** 3.0.0
 
-**Resulting version:** 3.1.0
+**Resulting version:** 3.1.1
 
 ## Scope
 
@@ -24,6 +24,7 @@ This was a parent-agent static and test-backed review. It did not use the instal
 | Medium | The canonical implementation lived only in legacy `commands/`. | Migrated to `skills/rlm/SKILL.md` while preserving the `/rlm:rlm` namespace. |
 | Medium | The project had no automated tests or CI. | Added eight standard-library regression tests and a pinned GitHub Actions workflow. |
 | Low | Documentation encoded optimistic token estimates and keyword-only mode selection. | Rewrote docs around scope-, risk-, and evidence-based focused, standard, and deep modes. |
+| Low | The repository had no native Codex plugin manifest and its skill frontmatter included Claude-only keys. | Added `.codex-plugin/plugin.json` and cross-compatible skill metadata. |
 
 ## Verification
 

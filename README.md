@@ -1,14 +1,14 @@
-# RLM Plugin v3.1 — Recursive analysis for Claude Code
+# RLM Plugin v3.1 — Recursive analysis for Claude Code and Codex
 
-[![Version](https://img.shields.io/badge/version-3.1.0-blue.svg)](https://github.com/adibirzu/rlm-plugin/releases)
+[![Version](https://img.shields.io/badge/version-3.1.1-blue.svg)](https://github.com/adibirzu/rlm-plugin/releases)
 [![CI](https://github.com/adibirzu/rlm-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/adibirzu/rlm-plugin/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-RLM helps Claude Code analyze repositories and document sets that are too large to read in one pass. It uses bounded discovery, recursive partitioning, evidence validation, and compact synthesis rather than pasting an entire context into the prompt.
+RLM helps Claude Code and Codex analyze repositories and document sets that are too large to read in one pass. It uses bounded discovery, recursive partitioning, evidence validation, and compact synthesis rather than pasting an entire context into the prompt.
 
 The approach is inspired by [“Recursive Language Models”](https://arxiv.org/abs/2512.24601) by Zhang, Kraska, and Khattab.
 
-## Why v3.1
+## Why v3.1.1
 
 This release updates the plugin for the current Claude Code plugin model:
 
@@ -19,8 +19,11 @@ This release updates the plugin for the current Claude Code plugin model:
 - Checkpoints are never deleted automatically.
 - Lockfiles and text-based assets remain available to security and supply-chain reviews.
 - Tests and CI validate packaging, installer behavior, shell quality, and plugin schema.
+- Native `.codex-plugin` metadata makes the same shared skill installable in Codex.
 
 ## Install
+
+### Claude Code
 
 Add the marketplace and install the plugin:
 
@@ -38,7 +41,17 @@ bash rlm-plugin/install.sh
 
 Apply the plugin in an active Claude Code session with `/reload-plugins`.
 
-## Usage
+### Codex
+
+RLM can also be installed from a local Codex marketplace entry:
+
+```bash
+codex plugin add rlm@<personal-marketplace-name>
+```
+
+The repository includes `.codex-plugin/plugin.json`; the marketplace name depends on the user's personal Codex catalog.
+
+## Claude Code usage
 
 ```text
 /rlm:rlm <task> [path]
@@ -66,6 +79,8 @@ Deep audit:
 ```
 
 RLM selects the smallest sufficient mode based on scope, risk, and evidence—not only the first verb in the request.
+
+In Codex, invoke the installed `rlm` skill by name or ask Codex to use RLM for the review.
 
 ## How it works
 

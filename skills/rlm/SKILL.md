@@ -1,12 +1,11 @@
 ---
+name: rlm
 description: Analyze large repositories and document sets with recursive, bounded exploration. Use for targeted searches, architecture analysis, change reviews, security audits, and cross-file synthesis.
-argument-hint: <task> [path]
-disable-model-invocation: false
 ---
 
 # Recursive Language Model workflow
 
-Use the request in `$ARGUMENTS` as the task and scope. If the scope is omitted, use the current working directory. Resolve paths before analysis and keep all work inside the user-authorized scope.
+Use the user's current request as the task and scope. Hosts with explicit skill arguments may expose that request as `$ARGUMENTS`. If the scope is omitted, use the current working directory. Resolve paths before analysis and keep all work inside the user-authorized scope.
 
 The central idea is simple: treat a large context as an external environment to query, not as one prompt to ingest. Narrow the search, partition independent work, and recursively reduce evidence into a concise answer.
 
