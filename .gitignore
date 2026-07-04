@@ -12,5 +12,9 @@ Thumbs.db
 # RLM intermediate files
 .rlm/
 
+# Python test artifacts
+__pycache__/
+*.py[cod]
+
 # Node (if any tooling added later)
 node_modules/

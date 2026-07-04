@@ -2,6 +2,27 @@
 
 All notable changes to the RLM Plugin are documented in this file.
 
+## [3.1.0] - 2026-07-04
+
+### Added
+- Canonical `skills/rlm/SKILL.md` workflow with focused, standard, and deep analysis modes
+- Explicit prompt-injection, secret-redaction, authorization, and scope boundaries
+- Portable fallbacks when memory, local knowledge, network access, or sub-agents are unavailable
+- Standard-library regression tests for packaging, safety invariants, version consistency, and installer behavior
+- GitHub Actions CI for unit tests, shell syntax, ShellCheck, secret-pattern checks, and strict Claude plugin validation
+
+### Changed
+- Replaced private cache/registry mutation in `install.sh` with supported `claude plugin` marketplace/install/uninstall commands
+- Migrated the canonical workflow from legacy `commands/` to the skills-first plugin layout
+- Reworked mode selection to consider scope and risk rather than keyword matching alone
+- Made deep-audit checkpoints opt-in and non-destructive; stale checkpoints are never automatically removed
+- Kept dependency lockfiles and text-based assets available to security and supply-chain analysis
+- Updated documentation and examples to use the namespaced `/rlm:rlm` invocation
+
+### Removed
+- Hard-coded model names and assumptions about specific agent, memory, and task-output APIs
+- Automatic checkpoint deletion and direct writes to Claude Code internal state files
+
 ## [3.0.0] - 2026-02-01
 
 ### Added
