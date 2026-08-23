@@ -2,7 +2,7 @@
   "name": "rlm",
   "displayName": "Recursive Language Model",
   "description": "Recursive, evidence-backed analysis for repositories and large document sets with safe capability fallbacks",
-  "version": "3.1.1",
+  "version": "3.2.0",
   "author": {
     "name": "adibirzu"
   },

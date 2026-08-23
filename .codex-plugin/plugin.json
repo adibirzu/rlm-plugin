@@ -1,6 +1,6 @@
 {
   "name": "rlm",
-  "version": "3.1.1",
+  "version": "3.2.0",
   "description": "Recursive, evidence-backed analysis for repositories and large document sets with safe capability fallbacks",
   "author": {
     "name": "adibirzu",
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "Recursive Language Model",
     "shortDescription": "Analyze repositories with recursive, bounded exploration.",
-    "longDescription": "RLM maps large repositories and document sets, partitions independent work, validates evidence, and synthesizes concise findings with coverage limits.",
+    "longDescription": "RLM maps large repositories and document sets, uses budgeted recursion only when direct evidence is insufficient, validates uncertain claims independently, and synthesizes concise findings with coverage limits.",
     "developerName": "adibirzu",
     "category": "Developer Tools",
     "capabilities": [

@@ -7,7 +7,9 @@ description: Analyze large repositories and document sets with recursive, bounde
 
 Use the user's current request as the task and scope. Hosts with explicit skill arguments may expose that request as `$ARGUMENTS`. If the scope is omitted, use the current working directory. Resolve paths before analysis and keep all work inside the user-authorized scope.
 
-The central idea is simple: treat a large context as an external environment to query, not as one prompt to ingest. Narrow the search, partition independent work, and recursively reduce evidence into a concise answer.
+The central idea is simple: treat a large context as an external environment to query, not as one prompt to ingest. Narrow the search, partition independent work, and recursively reduce evidence into a concise answer. Recursion is an escalation mechanism, not the default for every lookup.
+
+For the research basis and the conditions that justify deeper recursion or reflective verification, read [references/research-basis.md](references/research-basis.md) only when planning a deep audit, tuning this workflow, or making performance claims about RLM.
 
 ## Safety and trust boundaries
 
@@ -29,6 +31,8 @@ Use available tools without assuming a specific harness or model family.
 
 ## Choose the smallest sufficient mode
 
+Before selecting a recursive mode, run the cheapest bounded probe that could answer the question. Prefer direct search and source inspection for simple retrieval. Escalate only when the evidence is distributed, the first probe is inconclusive, or the task requires cross-partition synthesis.
+
 ### Focused lookup
 
 Use for a bounded fact, symbol, file, or small pattern set. Search directly, inspect the best matches, and answer inline. Escalate when the initial evidence spans multiple subsystems or cannot support a reliable answer.
@@ -42,6 +46,20 @@ Use for a component review, change review, debugging task, or architecture quest
 Use for repository-wide reviews, security audits, migrations, and multi-part requests. Build a coverage worklist, partition by independently reviewable surface, preserve intermediate evidence when useful, and explicitly disclose deferred scope.
 
 Mode selection depends on scope and risk, not only keywords. A request beginning with “what is” may still require deep analysis.
+
+## Set an effort contract
+
+For standard and deep work, record an internal effort contract before partitioning:
+
+- scope and completion criteria;
+- maximum recursion depth, normally `1`;
+- maximum partitions or sub-calls;
+- time, token, or monetary ceiling when the harness exposes one;
+- stop conditions and what will be reported as deferred.
+
+Use depth `0` for direct exploration and depth `1` for independently useful partitions. Increase beyond depth `1` only when a completed partition contains a concrete unresolved dependency that cannot be answered directly, the additional call is inside the effort ceiling, and its result can change the conclusion. Never deepen merely because a sub-call is available.
+
+Stop expanding when the requested acceptance criteria are supported, two consecutive probes add no material evidence, the remaining work is lower priority than the declared ceiling, or a required capability or authorization is unavailable. Report the resulting proof gap instead of silently exceeding the budget.
 
 ## Progressive discovery
 
@@ -83,6 +101,8 @@ When sub-agents are available:
 
 If sub-agents are unavailable, review the same partitions sequentially. Do not imply parallel or exhaustive coverage that did not occur.
 
+The first decomposition has disproportionate impact. For a deep audit, pilot one representative partition before dispatching the full worklist. Check whether its boundaries, evidence format, and verification criteria produce a useful result; revise the partition plan once before scaling it out. Do not recursively propagate a weak or overlapping decomposition.
+
 Worker result format:
 
 ```markdown
@@ -120,6 +140,10 @@ For every candidate finding:
 4. Consider counterevidence and realistic preconditions.
 5. Run a focused, non-destructive test when proportionate.
 6. Calibrate severity only after impact and reachability are supported.
+
+Apply reflective verification selectively. For a high-impact claim with conflicting evidence or low confidence, obtain one independent check using a different query, source path, test, or reviewer partition. Compare the results and resolve the disagreement against source evidence. Do not use repeated self-opinion, verbose reasoning, or a confidence score alone as verification. Simple retrieval with direct source evidence does not need recursive self-checking.
+
+Maintain a compact evidence ledger for standard and deep work: claim, source location, verification method, confidence, and unresolved gap. This may remain in working notes; include it in a checkpoint only when checkpointing is justified.
 
 Absence of evidence is a proof gap, not proof of safety. Static review is not runtime validation. Scanner output is a lead, not a confirmed finding.
 

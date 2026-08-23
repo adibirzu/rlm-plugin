@@ -1,4 +1,4 @@
-# RLM v3.1 implementation guide
+# RLM v3.2 implementation guide
 
 ## Design goal
 
@@ -33,6 +33,8 @@ Every optional capability has a fallback. Missing memory never blocks analysis, 
 
 Selection uses expected breadth, risk, and proof requirements. Keyword-only routing was removed because superficially simple questions can cross many systems.
 
+Before recursive execution, the workflow attempts the cheapest bounded probe that could answer the request. Standard and deep modes define an effort contract covering depth, partitions or sub-calls, available time/token/cost ceilings, and stop conditions. Depth 1 is the default maximum; deeper calls require a concrete unresolved dependency and remaining budget.
+
 ### 4. Discover progressively
 
 The workflow follows this order:
@@ -49,6 +51,8 @@ Generated dependencies, caches, and build output are normally noise, but they re
 ### 5. Partition recursively
 
 Deep work uses independently reviewable partitions such as packages, entry points, trust boundaries, or document sections. Each partition has one owner and a completion receipt. Parallel workers return immutable results; the coordinator owns deduplication and synthesis.
+
+One representative partition is piloted before broad dispatch. This makes decomposition quality observable before overlapping or weak boundaries are multiplied across the worklist.
 
 The worker contract records:
 
@@ -71,6 +75,8 @@ controllable entry point
 ```
 
 Mitigations and negative evidence are recorded. Static inspection is labeled as static, and scanner output is treated as a lead. Severity follows reachability and impact rather than pattern names.
+
+High-impact claims with conflicting evidence or low confidence receive one independent check through a different query, source path, test, or reviewer partition. Repeated self-opinion and confidence scores are not treated as evidence. A compact evidence ledger keeps claim, source, verification, confidence, and proof gaps aligned.
 
 ### 7. Synthesize and report
 

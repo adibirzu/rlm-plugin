@@ -1,6 +1,6 @@
-# RLM Plugin v3.1 — Recursive analysis for Claude Code and Codex
+# RLM Plugin v3.2 — Budgeted recursive analysis for Claude Code and Codex
 
-[![Version](https://img.shields.io/badge/version-3.1.1-blue.svg)](https://github.com/adibirzu/rlm-plugin/releases)
+[![Version](https://img.shields.io/badge/version-3.2.0-blue.svg)](https://github.com/adibirzu/rlm-plugin/releases)
 [![CI](https://github.com/adibirzu/rlm-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/adibirzu/rlm-plugin/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -8,9 +8,18 @@ RLM helps Claude Code and Codex analyze repositories and document sets that are 
 
 The approach is inspired by [“Recursive Language Models”](https://arxiv.org/abs/2512.24601) by Zhang, Kraska, and Khattab.
 
-## Why v3.1.1
+## Why v3.2.0
 
-This release updates the plugin for the current Claude Code plugin model:
+This release updates the workflow using the original RLM paper and newer reproduction and uncertainty-aware research:
+
+- Direct lookup and depth-0 exploration precede recursive calls.
+- Recursion defaults to depth 1 and requires a concrete unresolved dependency to deepen.
+- Effort contracts bound partitions, sub-calls, time, tokens, and cost when available.
+- Deep audits pilot their first decomposition before scaling it out.
+- High-impact uncertain claims receive an independent evidence check; simple source-backed facts do not.
+- Standard and deep work maintain a compact claim-to-evidence ledger.
+
+It retains the v3.1 packaging and safety improvements:
 
 - `skills/` is now the canonical workflow surface.
 - Installation uses supported `claude plugin` commands and the adibirzu marketplace.
@@ -87,9 +96,9 @@ In Codex, invoke the installed `rlm` skill by name or ask Codex to use RLM for t
 ```text
 request
   -> establish scope, trust boundaries, and available capabilities
-  -> choose focused, standard, or deep mode
+  -> choose direct, focused, standard, or deep mode and set an effort contract
   -> inventory and progressively narrow the relevant context
-  -> partition independent surfaces when the scope is large
+  -> pilot and partition independent surfaces when the scope is large
   -> validate candidates against controls, sinks, and counterevidence
   -> synthesize findings with file:line evidence and coverage limits
 ```

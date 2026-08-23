@@ -2,6 +2,20 @@
 
 All notable changes to the RLM Plugin are documented in this file.
 
+## [3.2.0] - 2026-08-23
+
+### Added
+- Research-backed effort contracts for recursion depth, partitions, sub-calls, time, tokens, cost, and stop conditions
+- Pilot decomposition before broad deep-audit dispatch
+- Selective independent verification for uncertain high-impact claims
+- Compact claim-to-evidence ledgers for standard and deep analysis
+- A progressively disclosed research reference covering the original RLM method, depth reproduction, and uncertainty-aware reflection
+
+### Changed
+- Prefer direct lookup and depth-0 exploration before recursive calls
+- Default recursive work to depth 1; deeper recursion now requires a named unresolved dependency and remaining budget
+- Stop on diminishing evidence or exhausted ceilings and report the resulting proof gap
+
 ## [3.1.1] - 2026-07-04
 
 ### Added

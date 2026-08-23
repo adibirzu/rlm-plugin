@@ -31,9 +31,17 @@ class PluginPackageTests(unittest.TestCase):
         manifest = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
 
         self.assertEqual(manifest["name"], "rlm")
-        self.assertEqual(manifest["version"], "3.1.1")
+        self.assertEqual(manifest["version"], "3.2.0")
         self.assertTrue((ROOT / "skills/rlm/SKILL.md").is_file())
         self.assertFalse((ROOT / "commands/rlm.md").exists())
+
+    def test_skill_references_are_packaged(self):
+        skill = ROOT / "skills/rlm/SKILL.md"
+        reference = ROOT / "skills/rlm/references/research-basis.md"
+
+        self.assertTrue(skill.is_file())
+        self.assertTrue(reference.is_file())
+        self.assertGreater(reference.stat().st_size, 500)
 
     def test_codex_manifest_matches_shared_plugin(self):
         claude = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
