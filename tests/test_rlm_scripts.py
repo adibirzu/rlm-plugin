@@ -155,6 +155,71 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(paths, ["src/app.py"])
         self.assertEqual(summary["skipped"]["binary"], 1)
 
+    def test_manifest_symlink_does_not_overwrite_its_target(self):
+        victim = write(self.tmp / "outside/victim.txt", "KEEP\n")
+        write(self.repo / "src/app.py")
+        manifest = self.repo / ".rlm/audit/manifest.json"
+        manifest.parent.mkdir(parents=True)
+        os.symlink(victim, manifest)
+
+        result = run_script(INVENTORY, self.repo, "--manifest", manifest)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(victim.read_text(), "KEEP\n")
+        self.assertFalse(manifest.is_symlink())
+        self.assertEqual(len(json.loads(manifest.read_text())["chunks"]), 1)
+
+    def test_manifest_cannot_leave_the_root_through_a_symlinked_directory(self):
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        write(self.repo / "src/app.py")
+        os.symlink(outside, self.repo / ".rlm")
+
+        result = run_script(
+            INVENTORY, self.repo, "--manifest", self.repo / ".rlm/audit/manifest.json"
+        )
+
+        self.assertEqual(result.returncode, 3)
+        self.assertIn("symlink", result.stderr)
+        self.assertEqual(list(outside.iterdir()), [])
+
+    @unittest.skipIf(os.geteuid() == 0, "root can read every directory")
+    def test_unreadable_directories_are_counted(self):
+        write(self.repo / "src/app.py")
+        locked = self.repo / "locked"
+        write(locked / "hidden.py")
+        locked.chmod(0)
+        self.addCleanup(locked.chmod, 0o755)
+
+        summary, _, paths = self.manifest_paths()
+
+        self.assertEqual(paths, ["src/app.py"])
+        self.assertGreaterEqual(summary["skipped"]["unreadable"], 1)
+
+    def test_output_budget_holds_for_any_stdout_encoding(self):
+        for index in range(40):
+            write(self.repo / f"pkg/module_{index:03d}.py")
+
+        result = subprocess.run(
+            [sys.executable, str(INVENTORY), str(self.repo), "--max-output-bytes", "600"],
+            env={**os.environ, "PYTHONIOENCODING": "utf-16-le"},
+            capture_output=True,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertLessEqual(len(result.stdout), 600)
+        self.assertEqual(json.loads(result.stdout)["totals"]["files"], 40)
+
+    def test_very_deep_trees_are_bounded_by_default(self):
+        deep = self.repo.joinpath(*["d"] * 70)
+        write(deep / "bottom.py")
+        write(self.repo / "top.py")
+
+        summary, _, paths = self.manifest_paths()
+
+        self.assertEqual(paths, ["top.py"])
+        self.assertEqual(summary["skipped"]["depth_limited"], 1)
+
     def test_max_files_bounds_the_walk(self):
         for index in range(20):
             write(self.repo / f"src/f{index:02d}.py")
@@ -384,6 +449,57 @@ class LedgerTests(unittest.TestCase):
         unbudgeted = {k: v for k, v in named.items() if k != "max_depth"}
         self.assertIn("depth-unbudgeted", self.codes(self.mutated(budget=unbudgeted)))
         self.assertTrue(self.validate(self.mutated(budget=named))["valid"])
+
+    def test_depth_never_exceeds_the_declared_maximum(self):
+        budget = {"tier": "small", "depth": 1, "max_depth": 0}
+
+        self.assertEqual(self.codes(self.mutated(budget=budget)), {"depth-unbudgeted"})
+
+    def test_non_text_and_evasive_sections_are_rejected(self):
+        evasive = re.sub(
+            r"## Findings\n.*?\n## Counterevidence",
+            "## Findings\n- None of the files were reviewed\n\n## Counterevidence",
+            VALID_MARKDOWN,
+            flags=re.S,
+        )
+        honest = evasive.replace("None of the files were reviewed", "No findings.")
+
+        self.assertIn("empty-section", self.codes(self.mutated(verification=False)))
+        self.assertIn("empty-section", self.codes(self.mutated(counterevidence=[True])))
+        self.assertIn("empty-section", self.codes(evasive))
+        self.assertTrue(self.validate(honest)["valid"])
+
+    def test_malformed_values_are_reported_not_crashed_on(self):
+        cases = {
+            "http://[broken": "bad-citation",
+            "src/a\x00b.py:1": "bad-citation",
+            "src/app.py:" + "9" * 5000: "bad-citation",
+        }
+        for location, code in cases.items():
+            with self.subTest(location=location[:20]):
+                self.assertIn(
+                    code, self.codes(self.with_location(location), "--root", self.repo)
+                )
+        os.symlink("loop", self.repo / "loop")
+        self.assertIn(
+            "fabricated-citation",
+            self.codes(self.with_location("loop:1"), "--root", self.repo),
+        )
+        self.assertIn(
+            "bad-budget", self.codes(self.mutated(budget={"depth": "\u00b2"}))
+        )
+
+    def test_url_citations_are_checked_and_kept_whole(self):
+        for bad in ("https://two words.org/path", "https://github.com:bad/path"):
+            with self.subTest(url=bad):
+                self.assertIn("bad-citation", self.codes(self.with_location(bad)))
+        for good in ("https://[2001:db8::1]/help", "https://host.org/a,b;c"):
+            with self.subTest(url=good):
+                report = self.validate(self.with_location(good))
+                self.assertTrue(report["valid"], report["errors"])
+                self.assertEqual(report["summary"]["citations"], 1)
+        listed = self.validate(self.with_location(["https://host.org/a, b", "src/app.py:1"]))
+        self.assertEqual(listed["summary"]["citations"], 2)
 
     def test_tier_caps_are_enforced(self):
         dependency = "token refresh path in src/app.py"

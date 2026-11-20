@@ -30,11 +30,13 @@ REQUIRED_SECTIONS = ("coverage", "findings", "counterevidence", "verification")
 
 PLACEHOLDER_WORDS = frozenset({"", "tbd", "todo", "n/a", "na", "...", "-", "?", "unknown", "pending"})
 ABSENT_WORDS = PLACEHOLDER_WORDS | {"none", "no", "false", "null"}
-NO_FINDINGS = re.compile(r"^(none|no (confirmed )?findings?)\b", re.I)
+NO_FINDINGS = re.compile(r"(none|no (confirmed )?findings?)( (found|identified|confirmed))?[.!]?", re.I)
 TEMPLATE_SLOT = re.compile(r"<[^<>]*>")
 PLACEHOLDER_CITATIONS = frozenset({"path:line", "file:line", "path:line-line", "url"})
 PLACEHOLDER_HOSTS = re.compile(r"(^|\.)(example\.(com|org|net)|localhost)$", re.I)
-PATH_LINE = re.compile(r"^(?P<path>[^:\s][^:]*):(?P<start>\d+)(?::\d+)?(?:-(?P<end>\d+))?$")
+PATH_LINE = re.compile(
+    r"^(?P<path>[^:\s][^:]*):(?P<start>\d{1,9})(?::\d{1,9})?(?:-(?P<end>\d{1,9}))?$"
+)
 BULLET = re.compile(r"^\s*(?:[-*]|\d+\.)\s+(?P<text>.*)$")
 KEY_VALUE = re.compile(r"^(?P<key>[A-Za-z][A-Za-z _-]*):\s*(?P<value>.*)$")
 
@@ -57,7 +59,7 @@ class LedgerInputError(Exception):
 @dataclass
 class Finding:
     title: str
-    location: str | None = None
+    citations: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -83,7 +85,7 @@ def normalize_key(key: object) -> str:
 
 
 def as_text_list(value: object) -> list[str]:
-    if value is None:
+    if value is None or isinstance(value, bool):
         return []
     if isinstance(value, (str, int, float)):
         return [str(value)]
@@ -113,8 +115,13 @@ def parse_json(text: str) -> Ledger:
         for item in findings:
             if isinstance(item, dict):
                 item = {normalize_key(k): v for k, v in item.items()}
-                location = ", ".join(as_text_list(item.get("location")))
-                ledger.findings.append(Finding(str(item.get("title", "")), location))
+                location = item.get("location")
+                citations = (
+                    [clean_citation(str(entry)) for entry in location]
+                    if isinstance(location, list)
+                    else split_citations(str(location or ""))
+                )
+                ledger.findings.append(Finding(str(item.get("title", "")), citations))
             else:
                 ledger.findings.append(Finding(str(item)))
 
@@ -156,9 +163,9 @@ def parse_markdown(text: str) -> Ledger:
             ledger.reviewed += [part.strip() for part in value.split(",")]
         elif section == "findings":
             if finding is None:
-                ledger.declares_no_findings |= bool(NO_FINDINGS.match(entry))
+                ledger.declares_no_findings |= bool(NO_FINDINGS.fullmatch(entry.strip("`*_ ")))
             elif key == "location":
-                finding.location = value
+                finding.citations = split_citations(value)
         elif section == "counterevidence":
             ledger.counterevidence.append(entry)
         elif section == "verification":
@@ -188,11 +195,16 @@ def check_citation(token: str, root: Path | None) -> tuple[str, str] | None:
         return "placeholder-citation", f"'{token}' is a template placeholder, not evidence"
 
     if lowered.startswith(("http://", "https://")):
-        host = urlparse(token).hostname or ""
+        try:
+            parsed = urlparse(token)
+            host = parsed.hostname or ""
+            parsed.port  # raises ValueError for a malformed port
+        except ValueError:
+            host = ""
         if PLACEHOLDER_HOSTS.search(host):
             return "placeholder-citation", f"'{token}' points at a placeholder host"
-        if "." not in host:
-            return "bad-citation", f"'{token}' is not a resolvable URL"
+        if not re.search(r"[.:]", host) or re.search(r"\s", token):
+            return "bad-citation", f"'{token}' is not a well-formed URL"
         return None
 
     match = PATH_LINE.match(token)
@@ -204,20 +216,29 @@ def check_citation(token: str, root: Path | None) -> tuple[str, str] | None:
         return None
 
     cited = Path(match.group("path"))
-    resolved = (cited if cited.is_absolute() else root / cited).resolve()
-    if not resolved.is_relative_to(root):
-        return "citation-outside-root", f"'{token}' resolves outside {root}"
-    if not resolved.is_file():
-        return "fabricated-citation", f"'{match.group('path')}' does not exist under {root}"
-    total = count_lines(resolved)
+    try:
+        resolved = (cited if cited.is_absolute() else root / cited).resolve()
+        if not resolved.is_relative_to(root):
+            return "citation-outside-root", f"'{token}' resolves outside {root}"
+        if not resolved.is_file():
+            return "fabricated-citation", f"'{match.group('path')}' does not exist under {root}"
+        total = count_lines(resolved)
+    except ValueError:
+        return "bad-citation", "the cited path is not a valid file name"
+    except (OSError, RuntimeError) as error:
+        return "fabricated-citation", f"'{match.group('path')}' cannot be read: {error}"
     if end > total:
         return "fabricated-citation", f"'{token}' cites line {end} but the file has {total} lines"
     return None
 
 
+def clean_citation(text: str) -> str:
+    return text.replace("`", "").strip()
+
+
 def split_citations(location: str) -> list[str]:
-    cleaned = location.replace("`", "").strip()
-    return [part.strip() for part in re.split(r"[,;]\s*", cleaned) if part.strip()]
+    """Split on a comma or semicolon followed by a space, so URLs stay whole."""
+    return [part for part in re.split(r"[,;]\s+", clean_citation(location)) if part]
 
 
 def to_int(value: object) -> int | None:
@@ -226,7 +247,7 @@ def to_int(value: object) -> int | None:
     if isinstance(value, int):
         return value if value >= 0 else None
     text = str(value).strip()
-    return int(text) if text.isdigit() else None
+    return int(text) if text.isascii() and text.isdigit() and len(text) <= 9 else None
 
 
 def check_budget(budget: dict[str, object]) -> list[Issue]:
@@ -255,12 +276,12 @@ def check_budget(budget: dict[str, object]) -> list[Issue]:
             scope = f"the {tier} tier" if tier in TIER_BUDGETS else "any tier"
             issues.append(Issue("depth-over-tier", f"budget.{name}", f"{name} {value} exceeds the ceiling of {cap} for {scope}"))
 
-    if depth >= DEPTH_NEEDING_DEPENDENCY:
-        dependency = budget.get("named_dependency")
-        if dependency is None or is_placeholder(str(dependency), ABSENT_WORDS):
-            issues.append(Issue("depth-without-dependency", "budget.named_dependency", f"depth {depth} needs a named unresolved dependency"))
-        if max_depth is None or max_depth < depth:
-            issues.append(Issue("depth-unbudgeted", "budget.max_depth", f"depth {depth} is not covered by a declared max_depth"))
+    deep = depth >= DEPTH_NEEDING_DEPENDENCY
+    dependency = budget.get("named_dependency")
+    if deep and (dependency is None or is_placeholder(str(dependency), ABSENT_WORDS)):
+        issues.append(Issue("depth-without-dependency", "budget.named_dependency", f"depth {depth} needs a named unresolved dependency"))
+    if (deep and max_depth is None) or (max_depth is not None and depth > max_depth):
+        issues.append(Issue("depth-unbudgeted", "budget.max_depth", f"depth {depth} is not covered by a declared max_depth"))
     return issues
 
 
@@ -284,7 +305,7 @@ def validate(ledger: Ledger, root: Path | None) -> tuple[list[Issue], int]:
     citations = 0
     for index, finding in enumerate(ledger.findings):
         where = f"findings[{index}]"
-        tokens = split_citations(finding.location or "")
+        tokens = [token for token in finding.citations if token]
         if not tokens:
             issues.append(Issue("empty-citation", where, f"'{finding.title}' has no Location"))
         for token in tokens:

@@ -220,6 +220,7 @@ class PluginPackageTests(unittest.TestCase):
                 self.assertIn(phrase, skill)
 
         self.assertNotIn("rm -rf", skill)
+        self.assertNotIn("names and sizes only", skill)
         self.assertNotIn("TaskOutput", skill)
         self.assertNotIn("argument-hint:", skill)
         self.assertNotIn("disable-model-invocation:", skill)

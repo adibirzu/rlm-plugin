@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build a bounded inventory and a partitioned worklist for an RLM analysis.
 
-The script reads file names and sizes only. It never prints file contents.
+The script lists file names and sizes. It reads at most the first kilobyte of
+each file to tell text from binary, and it never prints file contents.
 Standard output is a compact JSON summary that stays inside --max-output-bytes.
 The full list of paths per chunk goes to the --manifest file, which belongs in
 the scratch directory and not in the model context.
@@ -13,7 +14,9 @@ import argparse
 import json
 import math
 import os
+import stat
 import sys
+import tempfile
 from pathlib import Path
 
 NOISE_DIRS = frozenset(
@@ -29,6 +32,7 @@ SKIP_REASONS = (
     "unreadable", "depth_limited",
 )
 SNIFF_BYTES = 1024
+DEFAULT_MAX_DEPTH = 64
 BYTES_PER_TOKEN = 4
 MIN_OUTPUT_BYTES = 512
 TOP_GROUPS = 8
@@ -76,8 +80,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("root", nargs="?", default=".", help="directory to inventory")
     parser.add_argument("--manifest", type=Path, help="write the full chunk worklist here")
     parser.add_argument("--max-files", type=positive_int, default=5000)
-    parser.add_argument("--max-depth", type=non_negative_int, default=None,
-                        help="directory levels below ROOT to enter (default: no limit)")
+    parser.add_argument("--max-depth", type=non_negative_int, default=DEFAULT_MAX_DEPTH,
+                        help=f"directory levels below ROOT to enter (default: {DEFAULT_MAX_DEPTH})")
     parser.add_argument("--chunk-bytes", type=positive_int, default=200_000,
                         help="byte budget per chunk (default: 200000, about 50k tokens)")
     parser.add_argument("--chunk-files", type=positive_int, default=200,
@@ -99,16 +103,31 @@ def classify_symlink(path: Path, root: Path, skipped: dict[str, int]) -> None:
     skipped[reason] += 1
 
 
-def is_binary(path: Path) -> bool:
-    with path.open("rb") as handle:
-        return b"\0" in handle.read(SNIFF_BYTES)
+def text_file_size(path: Path) -> int | None:
+    """Return the size of a regular text file, or None when it looks binary.
+
+    The file is opened without following a symlink, so an entry swapped for a
+    link after it was listed is refused instead of read.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    with os.fdopen(os.open(path, flags), "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise OSError(f"{path} is not a regular file")
+        return None if b"\0" in handle.read(SNIFF_BYTES) else info.st_size
 
 
-def walk(root: Path, max_files: int, max_depth: int | None, include_noise: bool):
+def walk(root: Path, max_files: int, max_depth: int, include_noise: bool):
     """Return ([(relative_path, size)], skipped_counts, truncated)."""
     skipped = dict.fromkeys(SKIP_REASONS, 0)
     files: list[tuple[str, int]] = []
-    for current, dirnames, filenames in os.walk(root, followlinks=False):
+
+    def unreadable_directory(_error: OSError) -> None:
+        skipped["unreadable"] += 1
+
+    for current, dirnames, filenames in os.walk(
+        root, followlinks=False, onerror=unreadable_directory
+    ):
         current_path = Path(current)
         depth = len(current_path.relative_to(root).parts)
         entered = []
@@ -118,7 +137,7 @@ def walk(root: Path, max_files: int, max_depth: int | None, include_noise: bool)
                 classify_symlink(path, root, skipped)
             elif not include_noise and name in NOISE_DIRS:
                 skipped["noise_dirs"] += 1
-            elif max_depth is not None and depth + 1 > max_depth:
+            elif depth + 1 > max_depth:
                 skipped["depth_limited"] += 1
             else:
                 entered.append(name)
@@ -131,14 +150,13 @@ def walk(root: Path, max_files: int, max_depth: int | None, include_noise: bool)
                 continue
             try:
                 if not path.is_file():
-                    skipped["unreadable"] += 1
-                    continue
-                if is_binary(path):
-                    skipped["binary"] += 1
-                    continue
-                size = path.stat().st_size
+                    raise OSError(f"{path} is not a regular file")
+                size = text_file_size(path)
             except OSError:
                 skipped["unreadable"] += 1
+                continue
+            if size is None:
+                skipped["binary"] += 1
                 continue
             if len(files) >= max_files:
                 return files, skipped, True
@@ -255,9 +273,28 @@ def fit_to_budget(summary: dict, limit: int) -> str:
     return encode(minimal)
 
 
-def write_manifest(path: Path, root: Path, chunks: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"root": str(root), "chunks": chunks}, indent=1) + "\n")
+def write_manifest(path: Path, root: Path, lexical_root: Path, chunks: list[dict]) -> None:
+    """Write the manifest atomically, without writing through a symlink.
+
+    A manifest addressed inside ROOT must also resolve inside ROOT, so a
+    symlinked scratch directory in an untrusted tree cannot redirect the write.
+    """
+    target = Path(os.path.abspath(path))
+    inside = target.is_relative_to(root) or target.is_relative_to(lexical_root)
+    if inside and not target.parent.resolve().is_relative_to(root):
+        raise OSError("its directory leaves ROOT through a symlink")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"root": str(root), "chunks": chunks}, indent=1) + "\n"
+    handle = tempfile.NamedTemporaryFile(
+        "w", dir=target.parent, prefix=".manifest-", suffix=".tmp", delete=False
+    )
+    try:
+        with handle:
+            handle.write(payload)
+        os.replace(handle.name, target)
+    except OSError:
+        Path(handle.name).unlink(missing_ok=True)
+        raise
 
 
 def main(argv: list[str]) -> int:
@@ -266,6 +303,7 @@ def main(argv: list[str]) -> int:
     if not root.is_dir():
         print(f"error: {args.root} is not a directory. Pass an existing ROOT.", file=sys.stderr)
         return 2
+    lexical_root = Path(os.path.abspath(root))
     root = root.resolve()
 
     files, skipped, truncated = walk(root, args.max_files, args.max_depth, args.include_noise)
@@ -273,7 +311,7 @@ def main(argv: list[str]) -> int:
 
     if args.manifest is not None:
         try:
-            write_manifest(args.manifest, root, chunks)
+            write_manifest(args.manifest, root, lexical_root, chunks)
         except OSError as error:
             print(f"error: cannot write manifest {args.manifest}: {error}", file=sys.stderr)
             return 3
@@ -301,7 +339,8 @@ def main(argv: list[str]) -> int:
         ],
         "manifest": str(args.manifest) if args.manifest is not None else None,
     }
-    sys.stdout.write(fit_to_budget(summary, args.max_output_bytes))
+    sys.stdout.flush()
+    sys.stdout.buffer.write(fit_to_budget(summary, args.max_output_bytes).encode())
     return 0
 
 

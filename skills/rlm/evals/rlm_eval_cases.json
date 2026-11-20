@@ -89,6 +89,41 @@
           "error_codes": [
             "bad-citation"
           ]
+        },
+        {
+          "name": "sub-call made against a declared maximum depth of 0",
+          "ledger": {
+            "budget": {
+              "tier": "frontier",
+              "depth": 1,
+              "max_depth": 0
+            },
+            "coverage": {
+              "reviewed": [
+                "config/"
+              ],
+              "deferred": []
+            },
+            "findings": [
+              {
+                "title": "Rate limiter default",
+                "severity": "info",
+                "location": "config/limits.yaml:14",
+                "evidence": "default_rps: 50 under the gateway block",
+                "confidence": "high"
+              }
+            ],
+            "counterevidence": [
+              "No environment override found in deploy/ (searched for RATE_LIMIT)"
+            ],
+            "verification": [
+              "Read config/limits.yaml lines 10-20 directly"
+            ]
+          },
+          "valid": false,
+          "error_codes": [
+            "depth-unbudgeted"
+          ]
         }
       ]
     },

@@ -59,14 +59,14 @@ class HarnessSyncTests(unittest.TestCase):
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
-    def run_installer(self, *args, source=None, home=None):
+    def run_installer(self, *args, source=None, home=None, env=None):
         command = [self.shell, str(INSTALLER), *args]
         command += ["--source", str(source or self.source)]
         command += ["--home", str(home or self.home)]
         return subprocess.run(
             command,
             cwd=self.tmp,
-            env={**os.environ, "PATH": "/usr/bin:/bin"},
+            env={**os.environ, "PATH": "/usr/bin:/bin", **(env or {})},
             capture_output=True,
             text=True,
         )
@@ -87,7 +87,14 @@ class HarnessSyncTests(unittest.TestCase):
 
     def backups(self):
         root = self.home / ".rlm-skill-backups"
-        return sorted(root.glob("*/*/rlm")) if root.is_dir() else []
+        if not root.is_dir():
+            return []
+        return sorted(
+            harness / "rlm"
+            for stamp in root.iterdir()
+            for harness in stamp.iterdir()
+            if os.path.lexists(harness / "rlm")
+        )
 
     def test_check_reports_every_harness_directory(self):
         self.skills(".claude/skills")
@@ -241,6 +248,89 @@ class HarnessSyncTests(unittest.TestCase):
         self.assert_linked(".codex/skills")
         self.assertIn("old", (other / "SKILL.md").read_text())
         self.assertFalse((other / "rlm").exists())
+        self.assertEqual(
+            sorted(os.readlink(backup) for backup in self.backups()),
+            sorted([str(other), str(self.tmp / "gone")]),
+        )
+
+    def test_failed_backup_aborts_without_linking(self):
+        copy = self.skills(".claude/skills") / "rlm"
+        self.write_skill(copy, "canonical v4\n")
+        diverged = self.skills(".grok/skills") / "rlm"
+        self.write_skill(diverged, "local edits\n")
+        (self.home / ".rlm-skill-backups").write_text("blocks the backup directory\n")
+
+        result = self.sync("--backup")
+
+        self.assertEqual(result.returncode, 1)
+        for directory in (copy, diverged):
+            self.assertFalse(directory.is_symlink())
+            self.assertTrue((directory / "SKILL.md").is_file())
+            self.assertFalse(os.path.lexists(directory / "rlm"))
+        self.assertIn("local edits", (diverged / "SKILL.md").read_text())
+
+    def test_copy_that_contains_the_source_is_a_conflict(self):
+        outer = self.skills(".claude/skills") / "rlm"
+        self.write_skill(outer, "outer copy\n")
+        nested = outer / "nested"
+        self.write_skill(nested, "nested source\n")
+
+        report = json.loads(
+            self.run_installer("--check", "--json", source=nested).stdout
+        )
+        result = self.run_installer("--sync-harnesses", "--backup", source=nested)
+
+        self.assertEqual(report["harnesses"][0]["state"], "conflict")
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(outer.is_symlink())
+        self.assertIn("nested source", (nested / "SKILL.md").read_text())
+        self.assertEqual(self.backups(), [])
+
+    def test_home_inside_the_source_is_a_usage_error(self):
+        home = self.source / "home"
+        (home / ".cursor/skills").mkdir(parents=True)
+
+        result = self.run_installer("--sync-harnesses", home=home)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(os.path.lexists(home / ".cursor/skills/rlm"))
+
+    def test_cdpath_does_not_corrupt_relative_paths(self):
+        self.skills(".cursor/skills")
+
+        result = subprocess.run(
+            [self.shell, str(INSTALLER), "--check", "--json",
+             "--source", "checkout/skills/rlm", "--home", "home"],
+            cwd=self.tmp,
+            env={**os.environ, "PATH": "/usr/bin:/bin", "CDPATH": str(self.tmp)},
+            capture_output=True, text=True,
+        )
+        report = json.loads(result.stdout)
+
+        self.assertEqual(report["source"], str(self.source))
+        self.assertEqual(report["home"], str(self.home))
+
+    def test_separator_characters_in_paths_do_not_fake_an_alias(self):
+        for harness, name in ((".claude", "shared|old"), (".codex", "shared")):
+            (self.tmp / name).mkdir()
+            (self.home / harness).mkdir()
+            os.symlink(self.tmp / name, self.home / harness / "skills")
+
+        _, _, states = self.check()
+
+        self.assertEqual(states[".claude/skills"], "missing")
+        self.assertEqual(states[".codex/skills"], "missing")
+
+    def test_control_characters_in_paths_stay_valid_json(self):
+        home = self.tmp / "ho\x01me"
+        (home / ".cursor/skills").mkdir(parents=True)
+
+        result = self.run_installer("--check", "--json", home=home)
+
+        self.assertEqual(json.loads(result.stdout)["home"], str(home))
+
+    def test_installer_needs_no_temporary_files(self):
+        self.assertNotIn("<<", INSTALLER.read_text())
 
     def test_sync_is_idempotent(self):
         self.write_skill(self.skills(".claude/skills") / "rlm", "canonical v4\n")

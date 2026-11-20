@@ -32,28 +32,28 @@ readonly STATES=(
 )
 
 usage() {
-    cat <<EOF
-Usage: ${0##*/} [--uninstall]
-       ${0##*/} --check [--json] [--source <skill-dir>] [--home <home-dir>]
-       ${0##*/} --sync-harnesses [--source <skill-dir>] [--home <home-dir>] [--backup]
-
-  (no arguments)     Install the Claude Code plugin from the marketplace.
-  --uninstall        Uninstall the Claude Code plugin.
-  --check            Report how each harness skill directory relates to the
-                     skill source. Read-only. Exits ${EXIT_DRIFT} when any directory
-                     has drifted, 0 when all present harnesses are linked.
-  --sync-harnesses   Symlink the skill into every harness that is present.
-                     An identical copy is replaced by a symlink. A copy that
-                     differs is left alone unless --backup is given. Replaced
-                     directories are moved to <home>/${BACKUP_DIR_NAME}/, never
-                     deleted. Exits 1 when a directory was refused.
-
-  --source <dir>     Skill directory holding SKILL.md (default: skills/rlm
-                     next to this script).
-  --home <dir>       Home directory to inspect (default: \$HOME).
-  --backup           Allow --sync-harnesses to move a differing copy aside.
-  --json             Print the --check report as JSON.
-EOF
+    local name=${0##*/}
+    printf '%s\n' \
+        "Usage: $name [--uninstall]" \
+        "       $name --check [--json] [--source <skill-dir>] [--home <home-dir>]" \
+        "       $name --sync-harnesses [--source <skill-dir>] [--home <home-dir>] [--backup]" \
+        "" \
+        "  (no arguments)     Install the Claude Code plugin from the marketplace." \
+        "  --uninstall        Uninstall the Claude Code plugin." \
+        "  --check            Report how each harness skill directory relates to the" \
+        "                     skill source. Read-only. Exits $EXIT_DRIFT when any directory" \
+        "                     has drifted, 0 when all present harnesses are linked." \
+        "  --sync-harnesses   Symlink the skill into every harness that is present." \
+        "                     An identical copy is replaced by a symlink. A copy that" \
+        "                     differs is left alone unless --backup is given. Replaced" \
+        "                     entries are moved to <home>/$BACKUP_DIR_NAME/, never" \
+        "                     deleted. Exits 1 when an entry was refused." \
+        "" \
+        "  --source <dir>     Skill directory holding SKILL.md (default: skills/rlm" \
+        "                     next to this script)." \
+        "  --home <dir>       Home directory to inspect (default: \$HOME)." \
+        "  --backup           Allow --sync-harnesses to move a differing copy aside." \
+        "  --json             Print the --check report as JSON."
 }
 
 fail() {
@@ -72,7 +72,7 @@ require_claude() {
 }
 
 physical_dir() {
-    (cd "$1" 2>/dev/null && pwd -P)
+    (CDPATH='' cd -- "$1" 2>/dev/null && pwd -P)
 }
 
 json_escape() {
@@ -82,21 +82,33 @@ json_escape() {
     text=${text//$'\n'/\\n}
     text=${text//$'\r'/\\r}
     text=${text//$'\t'/\\t}
+    case "$text" in
+        *[[:cntrl:]]*)
+            local code char
+            for code in 1 2 3 4 5 6 7 8 11 12 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 127; do
+                char=$(printf '%b' "\\0$(printf '%03o' "$code")")
+                text=${text//"$char"/$(printf '\\u%04x' "$code")}
+            done
+            ;;
+    esac
     printf '%s' "$text"
 }
 
 SOURCE_DIR=""
 HOME_DIR=""
-SEEN_DIRS=""
+SEEN_PATHS=()
+SEEN_RELS=()
+SEEN_COUNT=0
 STATE=""
 DETAIL=""
+BACKUP_PATH=""
 
 # Sets STATE and DETAIL for one harness skill directory. Never writes.
 classify() {
     local rel=$1
     local skills_dir="$HOME_DIR/$rel"
     local target="$skills_dir/$SKILL_NAME"
-    local physical seen resolved
+    local physical resolved index=0
     DETAIL=""
 
     if [ ! -d "$(dirname "$skills_dir")" ]; then
@@ -113,17 +125,17 @@ classify() {
         DETAIL="skills path is not a usable directory"
         return
     fi
-    while IFS= read -r seen; do
-        if [ "${seen%%|*}" = "$physical" ]; then
+    while [ "$index" -lt "$SEEN_COUNT" ]; do
+        if [ "${SEEN_PATHS[$index]}" = "$physical" ]; then
             STATE="alias"
-            DETAIL="same directory as ${seen#*|}"
+            DETAIL="same directory as ${SEEN_RELS[$index]}"
             return
         fi
-    done <<EOF
-$SEEN_DIRS
-EOF
-    SEEN_DIRS="${SEEN_DIRS}${physical}|${rel}
-"
+        index=$((index + 1))
+    done
+    SEEN_PATHS[SEEN_COUNT]=$physical
+    SEEN_RELS[SEEN_COUNT]=$rel
+    SEEN_COUNT=$((SEEN_COUNT + 1))
 
     if [ -L "$target" ]; then
         resolved=$(physical_dir "$target") || resolved=""
@@ -134,8 +146,12 @@ EOF
             DETAIL="points to $(readlink "$target")"
         fi
     elif [ -d "$target" ]; then
-        if [ "$(physical_dir "$target")" = "$SOURCE_DIR" ]; then
+        resolved=$(physical_dir "$target") || resolved=""
+        if [ "$resolved" = "$SOURCE_DIR" ]; then
             STATE="source"
+        elif [ -z "$resolved" ] || [ "${SOURCE_DIR#"$resolved"/}" != "$SOURCE_DIR" ]; then
+            STATE="conflict"
+            DETAIL="contains the skill source or cannot be read"
         elif diff -rq -x __pycache__ -x .DS_Store "$SOURCE_DIR" "$target" >/dev/null 2>&1; then
             STATE="copy-identical"
         else
@@ -203,19 +219,39 @@ run_check() {
     fi
 }
 
+# Moves one entry into the backup directory and sets BACKUP_PATH.
 move_to_backup() {
     local rel=$1 target=$2 stamp=$3
     local destination="$HOME_DIR/$BACKUP_DIR_NAME/$stamp/${rel//\//_}/$SKILL_NAME"
 
-    [ ! -e "$destination" ] || fail "Backup destination already exists: $destination"
-    mkdir -p "$(dirname "$destination")"
-    mv -- "$target" "$destination"
-    printf '%s' "$destination"
+    if [ -e "$destination" ] || [ -L "$destination" ]; then
+        printf 'Refused: backup destination already exists: %s\n' "$destination" >&2
+        return 1
+    fi
+    if ! mkdir -p "$(dirname "$destination")" || ! mv -- "$target" "$destination"; then
+        printf 'Refused: could not move %s to %s. Nothing was linked there.\n' "$target" "$destination" >&2
+        return 1
+    fi
+    BACKUP_PATH=$destination
+}
+
+create_link() {
+    local target=$1
+
+    if [ -e "$target" ] || [ -L "$target" ]; then
+        printf 'Refused: %s is occupied. Nothing was linked there.\n' "$target" >&2
+        return 1
+    fi
+    ln -s "$SOURCE_DIR" "$target"
+}
+
+replace_with_link() {
+    move_to_backup "$1" "$2" "$3" && create_link "$2"
 }
 
 run_sync() {
     local allow_backup=$1
-    local rel skills_dir target stamp saved refused=0
+    local rel skills_dir target stamp refused=0
 
     stamp=$(date -u +%Y%m%dT%H%M%SZ)
     for rel in "${HARNESS_DIRS[@]}"; do
@@ -227,26 +263,26 @@ run_sync() {
                 printf '%-15s %s\n' "$STATE" "$rel"
                 ;;
             missing)
-                mkdir -p "$skills_dir"
-                ln -s "$SOURCE_DIR" "$target"
-                printf '%-15s %s\n' "linked" "$rel"
+                if mkdir -p "$skills_dir" && create_link "$target"; then
+                    printf '%-15s %s\n' "linked" "$rel"
+                else
+                    refused=1
+                fi
                 ;;
-            stale-link)
-                ln -sfn "$SOURCE_DIR" "$target"
-                printf '%-15s %s (was: %s)\n' "relinked" "$rel" "${DETAIL#points to }"
-                ;;
-            copy-identical)
-                saved=$(move_to_backup "$rel" "$target" "$stamp")
-                ln -s "$SOURCE_DIR" "$target"
-                printf '%-15s %s (identical copy moved to %s)\n' "linked" "$rel" "$saved"
+            stale-link|copy-identical)
+                if replace_with_link "$rel" "$target" "$stamp"; then
+                    printf '%-15s %s (%s moved to %s)\n' "linked" "$rel" "$STATE" "$BACKUP_PATH"
+                else
+                    refused=1
+                fi
                 ;;
             copy-diverged)
-                if [ "$allow_backup" -eq 1 ]; then
-                    saved=$(move_to_backup "$rel" "$target" "$stamp")
-                    ln -s "$SOURCE_DIR" "$target"
-                    printf '%-15s %s (local copy moved to %s)\n' "linked" "$rel" "$saved"
-                else
+                if [ "$allow_backup" -ne 1 ]; then
                     printf 'Refused: %s differs from the source. Rerun with --backup to move it aside.\n' "$target" >&2
+                    refused=1
+                elif replace_with_link "$rel" "$target" "$stamp"; then
+                    printf '%-15s %s (local copy moved to %s)\n' "linked" "$rel" "$BACKUP_PATH"
+                else
                     refused=1
                 fi
                 ;;
@@ -298,6 +334,9 @@ harness_mode() {
     SOURCE_DIR=$(physical_dir "$source_arg")
     [ -n "$home_arg" ] || usage_error "No home directory. Pass --home <dir>."
     HOME_DIR=$(physical_dir "$home_arg") || usage_error "Home directory does not exist: $home_arg"
+    if [ "$HOME_DIR" = "$SOURCE_DIR" ] || [ "${HOME_DIR#"$SOURCE_DIR"/}" != "$HOME_DIR" ]; then
+        usage_error "The home directory must not be inside the skill source: $HOME_DIR"
+    fi
 
     if [ "$mode" = "--check" ]; then
         run_check "$as_json"
