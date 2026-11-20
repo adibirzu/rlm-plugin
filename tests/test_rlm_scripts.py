@@ -290,6 +290,18 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(paths, ["top.py"])
         self.assertGreaterEqual(summary["skipped"]["depth_limited"], 1)
 
+    def test_max_depth_counts_directory_levels_below_the_root(self):
+        for name in ("top.py", "src/app.py", "src/deep/inner.py"):
+            write(self.repo / name)
+
+        listed = {
+            depth: self.manifest_paths("--max-depth", depth)[2] for depth in (0, 1, 2)
+        }
+
+        self.assertEqual(listed[0], ["top.py"])
+        self.assertEqual(listed[1], ["top.py", "src/app.py"])
+        self.assertEqual(listed[2], ["top.py", "src/app.py", "src/deep/inner.py"])
+
     def test_output_is_deterministic(self):
         for name in ("z.py", "a.py", "m/k.py", "m/b.py"):
             write(self.repo / name)
