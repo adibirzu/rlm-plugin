@@ -302,10 +302,12 @@ def write_manifest(path: Path, root: Path, chunks: list[dict]) -> None:
     A manifest addressed inside ROOT must also resolve inside ROOT, so a
     symlinked scratch directory in an untrusted tree cannot redirect the write.
     """
-    target = Path(os.path.abspath(path))
-    if addressed_inside(target, root) and not target.parent.resolve().is_relative_to(root):
+    named = Path.cwd() / path
+    parent = named.parent.resolve()
+    if addressed_inside(named, root) and not parent.is_relative_to(root):
         raise OSError("its directory leaves ROOT through a symlink")
-    target.parent.mkdir(parents=True, exist_ok=True)
+    target = parent / named.name
+    parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps({"root": str(root), "chunks": chunks}, indent=1) + "\n"
     handle = tempfile.NamedTemporaryFile(
         "w", dir=target.parent, prefix=".manifest-", suffix=".tmp", delete=False

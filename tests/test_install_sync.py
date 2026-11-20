@@ -316,6 +316,30 @@ class HarnessSyncTests(unittest.TestCase):
         self.assertIn("lives in the harness", (real / "SKILL.md").read_text())
         self.assertEqual(self.backups(), [])
 
+    def test_copy_containing_a_differently_spelled_source_is_a_conflict(self):
+        outer = self.skills(".claude/skills") / "rlm"
+        self.write_skill(outer, "outer copy\n")
+        self.write_skill(outer / "nested", "nested source\n")
+        other_case = outer.with_name("RLM") / "nested"
+        if not other_case.exists():
+            self.skipTest("case-sensitive file system")
+
+        result = self.run_installer("--sync-harnesses", "--backup", source=other_case)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(outer.is_symlink())
+        self.assertEqual(self.backups(), [])
+
+    def test_harness_root_inside_the_source_is_a_conflict(self):
+        os.symlink(self.source / "references", self.home / ".cursor")
+
+        _, _, states = self.check()
+        result = self.sync()
+
+        self.assertEqual(states[".cursor/skills"], "conflict")
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(os.path.lexists(self.source / "references/skills"))
+
     def test_skills_directory_inside_the_source_is_a_conflict(self):
         (self.home / ".cursor").mkdir()
         os.symlink(self.source / "references", self.home / ".cursor/skills")

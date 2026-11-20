@@ -198,6 +198,21 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 3)
         self.assertEqual(list(outside.iterdir()), [])
 
+    def test_manifest_path_through_a_symlink_and_dotdot_lands_where_named(self):
+        write(self.repo / "src/app.py")
+        (self.tmp / "releases/v4").mkdir(parents=True)
+        os.symlink(self.tmp / "releases/v4", self.tmp / "current")
+
+        result = subprocess.run(
+            [sys.executable, str(INVENTORY), str(self.repo),
+             "--manifest", "current/../manifest.json"],
+            cwd=self.tmp, capture_output=True, text=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.tmp / "releases/manifest.json").is_file())
+        self.assertFalse((self.tmp / "manifest.json").exists())
+
     def test_summary_always_says_whether_coverage_is_complete(self):
         write(self.repo / "top.py")
         complete, _ = self.inventory()
@@ -545,6 +560,50 @@ class LedgerTests(unittest.TestCase):
         listed = self.validate(self.with_location(["https://host.org/a, b", "src/app.py:1"]))
         self.assertEqual(listed["summary"]["citations"], 2)
 
+    def test_every_markdown_location_line_is_checked(self):
+        markdown = VALID_MARKDOWN.replace(
+            "- Location: `src/app.py:2`",
+            "- Location: src/app.py:999999\n- Location: `src/app.py:2`",
+        )
+
+        report = self.validate(markdown, "--root", self.repo)
+
+        self.assertEqual({i["code"] for i in report["errors"]}, {"fabricated-citation"})
+        self.assertEqual(report["summary"]["citations"], 2)
+
+    def test_backticked_citation_keeps_its_punctuation(self):
+        write(self.repo / "src/report,2026.md", "one\n")
+        markdown = VALID_MARKDOWN.replace(
+            "`src/app.py:2`", "`src/report,2026.md:1` and `src/app.py:2`"
+        )
+
+        report = self.validate(markdown, "--root", self.repo)
+
+        self.assertTrue(report["valid"], report["errors"])
+        self.assertEqual(report["summary"]["citations"], 2)
+
+    def test_named_dependency_must_be_text(self):
+        budget = {"tier": "frontier", "depth": 2, "max_depth": 2}
+        for dependency in ({}, [], 7, True):
+            with self.subTest(dependency=dependency):
+                ledger = self.mutated(budget={**budget, "named_dependency": dependency})
+                self.assertIn("depth-without-dependency", self.codes(ledger))
+
+    def test_bare_none_is_not_section_content(self):
+        self.assertIn("empty-section", self.codes(self.mutated(verification=["None"])))
+        self.assertIn("empty-section", self.codes(self.mutated(counterevidence=["none"])))
+        self.assertIn(
+            "empty-section",
+            self.codes(VALID_MARKDOWN.replace(
+                "- Ran the reader against a 1 GB file: memory grew linearly", "- None"
+            )),
+        )
+        self.assertTrue(
+            self.validate(
+                self.mutated(verification=["None could run: the sandbox is read-only"])
+            )["valid"]
+        )
+
     def test_compact_citation_lists_are_split(self):
         report = self.validate(
             self.with_location("src/app.py:1,src/app.py:2;src/app.py:3"), "--root", self.repo
@@ -609,6 +668,10 @@ class LedgerTests(unittest.TestCase):
         )
         self.assertEqual(huge.returncode, 2)
         self.assertNotIn("Traceback", huge.stderr)
+        nested = "[" * 600 + '"deep"' + "]" * 600
+        deep = run_script(LEDGER, "-", "--json", stdin='{"verification": ' + nested + "}")
+        self.assertIn(deep.returncode, (1, 2))
+        self.assertNotIn("Traceback", deep.stderr)
 
         self.assertEqual(missing.returncode, 2)
         self.assertEqual(garbage.returncode, 2)

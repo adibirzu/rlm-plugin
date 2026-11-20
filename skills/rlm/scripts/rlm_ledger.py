@@ -37,6 +37,7 @@ PLACEHOLDER_HOSTS = re.compile(r"(^|\.)(example\.(com|org|net)|localhost)$", re.
 PATH_LINE = re.compile(
     r"^(?P<path>[^:\s][^:]*):(?P<start>\d{1,9})(?::\d{1,9})?(?:-(?P<end>\d{1,9}))?$"
 )
+CODE_SPAN = re.compile(r"`([^`]+)`")
 BULLET = re.compile(r"^\s*(?:[-*]|\d+\.)\s+(?P<text>.*)$")
 KEY_VALUE = re.compile(r"^(?P<key>[A-Za-z][A-Za-z _-]*):\s*(?P<value>.*)$")
 
@@ -166,7 +167,7 @@ def parse_markdown(text: str) -> Ledger:
             if finding is None:
                 ledger.declares_no_findings |= bool(NO_FINDINGS.fullmatch(entry.strip("`*_ ")))
             elif key == "location":
-                finding.citations = split_citations(value)
+                finding.citations += split_citations(value)
         elif section == "counterevidence":
             ledger.counterevidence.append(entry)
         elif section == "verification":
@@ -238,9 +239,16 @@ def clean_citation(text: str) -> str:
 
 
 def split_citations(location: str) -> list[str]:
-    """Split a citation list. A URL keeps its own commas and semicolons."""
-    tokens: list[str] = []
-    for part in re.split(r"[,;]\s+", clean_citation(location)):
+    """Split a citation list.
+
+    A backticked span is one citation, and a URL keeps its own commas and
+    semicolons.
+    """
+    tokens = [span.strip() for span in CODE_SPAN.findall(location)]
+    rest = CODE_SPAN.sub(",", location)
+    if tokens:
+        rest = re.sub(r"\s+and\s+", ", ", rest)
+    for part in re.split(r"[,;]\s+", clean_citation(rest)):
         if part.lower().startswith(("http://", "https://")):
             tokens.append(part)
         else:
@@ -285,7 +293,7 @@ def check_budget(budget: dict[str, object]) -> list[Issue]:
 
     deep = depth >= DEPTH_NEEDING_DEPENDENCY
     dependency = budget.get("named_dependency")
-    if deep and (dependency is None or is_placeholder(str(dependency), ABSENT_WORDS)):
+    if deep and (not isinstance(dependency, str) or is_placeholder(dependency, ABSENT_WORDS)):
         issues.append(Issue("depth-without-dependency", "budget.named_dependency", f"depth {depth} needs a named unresolved dependency"))
     if (deep and max_depth is None) or (max_depth is not None and depth > max_depth):
         issues.append(Issue("depth-unbudgeted", "budget.max_depth", f"depth {depth} is not covered by a declared max_depth"))
@@ -300,7 +308,7 @@ def validate(ledger: Ledger, root: Path | None) -> tuple[list[Issue], int]:
     ]
 
     def require_content(name: str, entries: list[str], hint: str) -> None:
-        if name in ledger.present and all(is_placeholder(entry) for entry in entries):
+        if name in ledger.present and all(is_placeholder(entry, ABSENT_WORDS) for entry in entries):
             issues.append(Issue("empty-section", name, hint))
 
     require_content("coverage", ledger.reviewed, "list what was reviewed")
@@ -332,7 +340,10 @@ def read_ledger(source: str, declared_format: str) -> Ledger:
     chosen = declared_format
     if chosen == "auto":
         chosen = "json" if source.endswith(".json") or text.lstrip().startswith("{") else "markdown"
-    return parse_json(text) if chosen == "json" else parse_markdown(text)
+    try:
+        return parse_json(text) if chosen == "json" else parse_markdown(text)
+    except RecursionError as error:
+        raise LedgerInputError("the ledger is nested too deeply") from error
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

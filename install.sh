@@ -83,6 +83,23 @@ link_map() {
         | sort)
 }
 
+# True when the first directory is the second one or lies beneath it. The
+# comparison is by inode, so a path spelled in another case still matches.
+is_within() {
+    local current=$1
+
+    while :; do
+        if [ "$current" -ef "$2" ]; then
+            return 0
+        fi
+        case "$current" in
+            /?*) current=${current%/*} ;;
+            *) return 1 ;;
+        esac
+        current=${current:-/}
+    done
+}
+
 same_tree() {
     diff -rq -x __pycache__ -x .DS_Store "$1" "$2" >/dev/null 2>&1 \
         && [ "$(link_map "$1")" = "$(link_map "$2")" ]
@@ -128,6 +145,11 @@ classify() {
         STATE="harness-absent"
         return
     fi
+    if physical=$(physical_dir "$(dirname "$skills_dir")") && is_within "$physical" "$SOURCE_DIR"; then
+        STATE="conflict"
+        DETAIL="harness directory is inside the skill source"
+        return
+    fi
     if [ ! -e "$skills_dir" ] && [ ! -L "$skills_dir" ]; then
         STATE="missing"
         DETAIL="skills directory does not exist yet"
@@ -138,7 +160,7 @@ classify() {
         DETAIL="skills path is not a usable directory"
         return
     fi
-    if [ "$physical" -ef "$SOURCE_DIR" ] || [ "${physical#"$SOURCE_DIR"/}" != "$physical" ]; then
+    if is_within "$physical" "$SOURCE_DIR"; then
         STATE="conflict"
         DETAIL="skills directory is inside the skill source"
         return
@@ -166,7 +188,7 @@ classify() {
         resolved=$(physical_dir "$target") || resolved=""
         if [ "$target" -ef "$SOURCE_DIR" ]; then
             STATE="source"
-        elif [ -z "$resolved" ] || [ "${SOURCE_DIR#"$resolved"/}" != "$SOURCE_DIR" ]; then
+        elif [ -z "$resolved" ] || is_within "$SOURCE_DIR" "$resolved"; then
             STATE="conflict"
             DETAIL="contains the skill source or cannot be read"
         elif same_tree "$SOURCE_DIR" "$target"; then
