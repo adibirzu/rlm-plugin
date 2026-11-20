@@ -183,6 +183,42 @@ class InventoryTests(unittest.TestCase):
         self.assertIn("symlink", result.stderr)
         self.assertEqual(list(outside.iterdir()), [])
 
+    def test_manifest_guard_sees_through_an_alias_of_the_root(self):
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        write(self.repo / "src/app.py")
+        os.symlink(outside, self.repo / ".rlm")
+        os.symlink(self.tmp, self.tmp / "alias")
+
+        result = run_script(
+            INVENTORY, self.repo,
+            "--manifest", self.tmp / "alias/alias/repo/.rlm/audit/manifest.json",
+        )
+
+        self.assertEqual(result.returncode, 3)
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_summary_always_says_whether_coverage_is_complete(self):
+        write(self.repo / "top.py")
+        complete, _ = self.inventory()
+        write(self.repo / "a/b/deep.py")
+        pruned, _ = self.inventory("--max-depth", 1)
+        for index in range(300):
+            write(self.repo / f"pkg/module_with_a_long_descriptive_name_{index:04d}.py")
+        capped, _ = self.inventory("--max-files", 10)
+        tiny, _ = self.inventory("--max-depth", 1, "--max-output-bytes", 512, "--chunk-bytes", 2)
+
+        self.assertIs(complete["coverage_complete"], True)
+        self.assertIs(pruned["coverage_complete"], False)
+        self.assertIs(capped["coverage_complete"], False)
+        self.assertIs(tiny["coverage_complete"], False)
+
+    def test_max_depth_has_a_safe_upper_bound(self):
+        result = run_script(INVENTORY, self.repo, "--max-depth", 2000)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--max-depth", result.stderr)
+
     @unittest.skipIf(os.geteuid() == 0, "root can read every directory")
     def test_unreadable_directories_are_counted(self):
         write(self.repo / "src/app.py")
@@ -195,6 +231,7 @@ class InventoryTests(unittest.TestCase):
 
         self.assertEqual(paths, ["src/app.py"])
         self.assertGreaterEqual(summary["skipped"]["unreadable"], 1)
+        self.assertIs(summary["coverage_complete"], False)
 
     def test_output_budget_holds_for_any_stdout_encoding(self):
         for index in range(40):
@@ -465,6 +502,13 @@ class LedgerTests(unittest.TestCase):
         honest = evasive.replace("None of the files were reviewed", "No findings.")
 
         self.assertIn("empty-section", self.codes(self.mutated(verification=False)))
+        self.assertIn("empty-section", self.codes(self.mutated(verification=42)))
+        self.assertIn(
+            "empty-section", self.codes(self.mutated(verification={"check": False}))
+        )
+        self.assertTrue(
+            self.validate(self.mutated(verification={"check": "ran the unit tests"}))["valid"]
+        )
         self.assertIn("empty-section", self.codes(self.mutated(counterevidence=[True])))
         self.assertIn("empty-section", self.codes(evasive))
         self.assertTrue(self.validate(honest)["valid"])
@@ -500,6 +544,14 @@ class LedgerTests(unittest.TestCase):
                 self.assertEqual(report["summary"]["citations"], 1)
         listed = self.validate(self.with_location(["https://host.org/a, b", "src/app.py:1"]))
         self.assertEqual(listed["summary"]["citations"], 2)
+
+    def test_compact_citation_lists_are_split(self):
+        report = self.validate(
+            self.with_location("src/app.py:1,src/app.py:2;src/app.py:3"), "--root", self.repo
+        )
+
+        self.assertTrue(report["valid"], report["errors"])
+        self.assertEqual(report["summary"]["citations"], 3)
 
     def test_tier_caps_are_enforced(self):
         dependency = "token refresh path in src/app.py"
@@ -552,6 +604,11 @@ class LedgerTests(unittest.TestCase):
     def test_unreadable_input_is_a_usage_error(self):
         missing = run_script(LEDGER, self.tmp / "nope.json", "--json")
         garbage = run_script(LEDGER, "-", "--format", "json", stdin="{not json")
+        huge = run_script(
+            LEDGER, "-", "--json", stdin='{"budget": {"depth": ' + "9" * 5000 + "}}"
+        )
+        self.assertEqual(huge.returncode, 2)
+        self.assertNotIn("Traceback", huge.stderr)
 
         self.assertEqual(missing.returncode, 2)
         self.assertEqual(garbage.returncode, 2)

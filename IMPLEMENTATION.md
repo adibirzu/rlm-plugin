@@ -58,7 +58,7 @@ Generated dependencies, caches, and build output are normally noise, but they re
 
 ### 6. Partition recursively
 
-`rlm_inventory.py` produces the worklist. It walks the scope without following symlinks, counts links that point outside it, skips dependency and build directories unless asked, stops at a file cap, and packs files into chunks by a byte budget. Its printed summary is capped, and the full chunk list goes to a manifest file. Deep work regroups those chunks into independently reviewable partitions such as packages, entry points, trust boundaries, or document sections. Each partition has one owner and a completion receipt. Parallel workers return immutable results; the coordinator owns deduplication and synthesis.
+`rlm_inventory.py` produces the worklist. It walks the scope, skips symbolic links and counts those that point outside it, skips dependency and build directories unless asked, caps the listed files and the directory depth, reports whether coverage was complete, and packs files into chunks by a byte budget. The symlink guarantee holds for a tree that is not being rewritten during the scan. Its printed summary is capped, and the full chunk list goes to a manifest file. Deep work regroups those chunks into independently reviewable partitions such as packages, entry points, trust boundaries, or document sections. Each partition has one owner and a completion receipt. Parallel workers return immutable results; the coordinator owns deduplication and synthesis.
 
 One representative partition is piloted before broad dispatch. This makes decomposition quality observable before overlapping or weak boundaries are multiplied across the worklist.
 
@@ -119,7 +119,8 @@ The sync is built to be safe to run blind:
 - It only acts when asked. `--check` never writes.
 - It links harnesses whose home directory exists and creates nothing for the others.
 - Two entries that resolve to the same directory are handled once, and the second is reported as an alias.
-- An identical copy is replaced by a symlink. A copy that differs is refused unless `--backup` is given.
+- An identical copy is replaced by a symlink. A copy that differs, in file content or in where its symlinks point, is refused unless `--backup` is given.
+- If a link cannot be created after an entry was moved aside, the entry is put back.
 - Anything replaced is moved to `<home>/.rlm-skill-backups/<timestamp>/`. The script contains no delete command.
 - A skill source that lives inside a harness directory is recognized and left in place.
 - It runs on the Bash 3.2 that ships with macOS.

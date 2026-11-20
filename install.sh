@@ -72,7 +72,20 @@ require_claude() {
 }
 
 physical_dir() {
-    (CDPATH='' cd -- "$1" 2>/dev/null && pwd -P)
+    (CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P)
+}
+
+# Lists every symlink under a directory with its target text, so two trees
+# whose links point at different files never compare as equal.
+link_map() {
+    (CDPATH='' cd -P -- "$1" 2>/dev/null \
+        && find . -type l -exec sh -c 'for entry; do printf "%s -> %s\n" "$entry" "$(readlink "$entry")"; done' sh {} + \
+        | sort)
+}
+
+same_tree() {
+    diff -rq -x __pycache__ -x .DS_Store "$1" "$2" >/dev/null 2>&1 \
+        && [ "$(link_map "$1")" = "$(link_map "$2")" ]
 }
 
 json_escape() {
@@ -125,6 +138,11 @@ classify() {
         DETAIL="skills path is not a usable directory"
         return
     fi
+    if [ "$physical" -ef "$SOURCE_DIR" ] || [ "${physical#"$SOURCE_DIR"/}" != "$physical" ]; then
+        STATE="conflict"
+        DETAIL="skills directory is inside the skill source"
+        return
+    fi
     while [ "$index" -lt "$SEEN_COUNT" ]; do
         if [ "${SEEN_PATHS[$index]}" = "$physical" ]; then
             STATE="alias"
@@ -138,8 +156,7 @@ classify() {
     SEEN_COUNT=$((SEEN_COUNT + 1))
 
     if [ -L "$target" ]; then
-        resolved=$(physical_dir "$target") || resolved=""
-        if [ "$resolved" = "$SOURCE_DIR" ]; then
+        if [ "$target" -ef "$SOURCE_DIR" ]; then
             STATE="linked"
         else
             STATE="stale-link"
@@ -147,12 +164,12 @@ classify() {
         fi
     elif [ -d "$target" ]; then
         resolved=$(physical_dir "$target") || resolved=""
-        if [ "$resolved" = "$SOURCE_DIR" ]; then
+        if [ "$target" -ef "$SOURCE_DIR" ]; then
             STATE="source"
         elif [ -z "$resolved" ] || [ "${SOURCE_DIR#"$resolved"/}" != "$SOURCE_DIR" ]; then
             STATE="conflict"
             DETAIL="contains the skill source or cannot be read"
-        elif diff -rq -x __pycache__ -x .DS_Store "$SOURCE_DIR" "$target" >/dev/null 2>&1; then
+        elif same_tree "$SOURCE_DIR" "$target"; then
             STATE="copy-identical"
         else
             STATE="copy-diverged"
@@ -245,8 +262,21 @@ create_link() {
     ln -s "$SOURCE_DIR" "$target"
 }
 
+# Backs an entry up and links the skill in its place. If the link cannot be
+# created, the original entry is put back.
 replace_with_link() {
-    move_to_backup "$1" "$2" "$3" && create_link "$2"
+    local target=$2
+
+    move_to_backup "$1" "$target" "$3" || return 1
+    if create_link "$target"; then
+        return 0
+    fi
+    if [ ! -e "$target" ] && [ ! -L "$target" ] && mv -- "$BACKUP_PATH" "$target"; then
+        printf 'Link failed: %s was restored from the backup.\n' "$target" >&2
+    else
+        printf 'Link failed: the original entry is kept at %s.\n' "$BACKUP_PATH" >&2
+    fi
+    return 1
 }
 
 run_sync() {

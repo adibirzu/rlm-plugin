@@ -85,19 +85,20 @@ def normalize_key(key: object) -> str:
 
 
 def as_text_list(value: object) -> list[str]:
-    if value is None or isinstance(value, bool):
-        return []
-    if isinstance(value, (str, int, float)):
-        return [str(value)]
+    """Collect the strings in a section value. Other scalar types are not evidence."""
+    if isinstance(value, str):
+        return [value]
     if isinstance(value, dict):
-        return [" ".join(str(item) for item in value.values())]
-    return [text for item in value for text in as_text_list(item)]
+        value = list(value.values())
+    if isinstance(value, list):
+        return [text for item in value for text in as_text_list(item)]
+    return []
 
 
 def parse_json(text: str) -> Ledger:
     try:
         raw = json.loads(text)
-    except json.JSONDecodeError as error:
+    except (ValueError, RecursionError) as error:
         raise LedgerInputError(f"not valid JSON: {error}") from error
     if not isinstance(raw, dict):
         raise LedgerInputError("the JSON ledger must be an object")
@@ -237,8 +238,14 @@ def clean_citation(text: str) -> str:
 
 
 def split_citations(location: str) -> list[str]:
-    """Split on a comma or semicolon followed by a space, so URLs stay whole."""
-    return [part for part in re.split(r"[,;]\s+", clean_citation(location)) if part]
+    """Split a citation list. A URL keeps its own commas and semicolons."""
+    tokens: list[str] = []
+    for part in re.split(r"[,;]\s+", clean_citation(location)):
+        if part.lower().startswith(("http://", "https://")):
+            tokens.append(part)
+        else:
+            tokens += re.split(r"[,;]", part)
+    return [token.strip() for token in tokens if token.strip()]
 
 
 def to_int(value: object) -> int | None:

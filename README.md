@@ -104,7 +104,7 @@ python3 skills/rlm/scripts/rlm_inventory.py . --manifest .rlm/audit/manifest.jso
 python3 skills/rlm/scripts/rlm_ledger.py .rlm/audit/worker-01.md --root . --tier mid
 ```
 
-`rlm_inventory.py` skips dependency, cache, and build directories, never follows symlinks, prints a summary capped by `--max-output-bytes`, and writes the full chunk list to the manifest. `rlm_ledger.py` exits 1 when a worker result breaks the contract and lists each error with a code.
+`rlm_inventory.py` skips dependency, cache, and build directories and symbolic links, prints a summary capped by `--max-output-bytes`, says whether coverage was complete, and writes the full chunk list to the manifest. `rlm_ledger.py` exits 1 when a worker result breaks the contract and lists each error with a code.
 
 ## Evals
 

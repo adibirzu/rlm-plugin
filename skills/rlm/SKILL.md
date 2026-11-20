@@ -120,7 +120,7 @@ Build the worklist with the inventory script. It prints a bounded summary and wr
 python3 scripts/rlm_inventory.py <scope> --manifest .rlm/<topic>/manifest.json
 ```
 
-It skips dependency, cache, and build directories (override with `--include-noise`), never follows symlinks, counts links that point outside the scope, and caps the listed files with `--max-files`. Regroup its chunks into partitions with one owner and independently checkable completion criteria, such as a package, a runtime entry point, a trust boundary, or a document section. Stay inside the tier's partition limit. Defer the rest and say so.
+It skips dependency, cache, and build directories (override with `--include-noise`), skips symbolic links and counts those that point outside the scope, caps the listed files with `--max-files`, and stops 64 directory levels down unless `--max-depth` says otherwise. When its summary shows `coverage_complete: false`, part of the scope was not listed. Report that as deferred. Regroup its chunks into partitions with one owner and independently checkable completion criteria, such as a package, a runtime entry point, a trust boundary, or a document section. Stay inside the tier's partition limit. Defer the rest and say so.
 
 The first decomposition has disproportionate impact. For a deep audit, pilot one representative partition first. Check that its boundaries, evidence format, and verification criteria give a useful result, revise the plan once, then dispatch the rest. Do not propagate a weak or overlapping decomposition.
 

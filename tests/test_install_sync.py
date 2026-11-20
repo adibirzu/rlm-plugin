@@ -77,8 +77,8 @@ class HarnessSyncTests(unittest.TestCase):
         states = {entry["dir"]: entry["state"] for entry in report["harnesses"]}
         return result, report, states
 
-    def sync(self, *args):
-        return self.run_installer("--sync-harnesses", *args)
+    def sync(self, *args, env=None):
+        return self.run_installer("--sync-harnesses", *args, env=env)
 
     def assert_linked(self, harness):
         target = self.home / harness / "rlm"
@@ -285,6 +285,82 @@ class HarnessSyncTests(unittest.TestCase):
         self.assertFalse(outer.is_symlink())
         self.assertIn("nested source", (nested / "SKILL.md").read_text())
         self.assertEqual(self.backups(), [])
+
+    def test_source_reached_by_another_name_is_never_moved(self):
+        real = self.skills(".claude/skills") / "rlm"
+        self.write_skill(real, "lives in the harness\n")
+        alias = self.tmp / "alias-to-skill"
+        os.symlink(real, alias)
+        hardlink_view = self.tmp / "view"
+        os.symlink(self.home / ".claude/skills", hardlink_view)
+
+        for source in (alias, hardlink_view / "rlm"):
+            with self.subTest(source=source.name):
+                result = self.run_installer("--sync-harnesses", "--backup", source=source)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(real.is_symlink())
+                self.assertIn("lives in the harness", (real / "SKILL.md").read_text())
+                self.assertEqual(self.backups(), [])
+
+    def test_source_spelled_in_another_case_is_never_moved(self):
+        real = self.skills(".claude/skills") / "rlm"
+        self.write_skill(real, "lives in the harness\n")
+        other_case = real.with_name("RLM")
+        if not other_case.exists():
+            self.skipTest("case-sensitive file system")
+
+        result = self.run_installer("--sync-harnesses", "--backup", source=other_case)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(real.is_symlink())
+        self.assertIn("lives in the harness", (real / "SKILL.md").read_text())
+        self.assertEqual(self.backups(), [])
+
+    def test_skills_directory_inside_the_source_is_a_conflict(self):
+        (self.home / ".cursor").mkdir()
+        os.symlink(self.source / "references", self.home / ".cursor/skills")
+
+        _, _, states = self.check()
+        result = self.sync()
+
+        self.assertEqual(states[".cursor/skills"], "conflict")
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(os.path.lexists(self.source / "references/rlm"))
+
+    def test_failed_link_restores_the_original_entry(self):
+        copy = self.skills(".claude/skills") / "rlm"
+        self.write_skill(copy, "canonical v4\n")
+        fake_bin = self.tmp / "fake-bin"
+        fake_bin.mkdir()
+        (fake_bin / "ln").write_text("#!/bin/sh\nexit 1\n")
+        (fake_bin / "ln").chmod(0o755)
+
+        result = self.sync(env={"PATH": f"{fake_bin}:/usr/bin:/bin"})
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(copy.is_symlink())
+        self.assertIn("canonical v4", (copy / "SKILL.md").read_text())
+        self.assertEqual(self.backups(), [])
+        self.assertIn("restored", result.stderr)
+
+    def test_symlink_targets_are_part_of_copy_equality(self):
+        copy = self.skills(".claude/skills") / "rlm"
+        self.write_skill(copy, "canonical v4\n")
+        for directory, name in ((self.source, "one.md"), (copy, "two.md")):
+            (self.tmp / name).write_text("same bytes\n")
+            os.symlink(self.tmp / name, directory / "references/linked.md")
+
+        _, _, states = self.check()
+
+        self.assertEqual(states[".claude/skills"], "copy-diverged")
+
+    def test_home_is_resolved_physically(self):
+        (self.home / ".cursor/skills").mkdir(parents=True)
+        os.symlink(self.home / ".cursor", self.tmp / "shortcut")
+
+        result = self.run_installer("--check", "--json", home=self.tmp / "shortcut/..")
+
+        self.assertEqual(json.loads(result.stdout)["home"], str(self.home))
 
     def test_home_inside_the_source_is_a_usage_error(self):
         home = self.source / "home"
