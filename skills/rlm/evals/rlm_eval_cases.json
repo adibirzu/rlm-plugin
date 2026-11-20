@@ -1,0 +1,648 @@
+{
+  "skill_name": "rlm",
+  "schema_version": 1,
+  "description": "Benchmark and regression cases for the rlm skill. Run each prompt with and without the skill and grade the assertions. The ledger_checks are deterministic and are run against scripts/rlm_ledger.py by the test suite.",
+  "evals": [
+    {
+      "id": "focused-lookup-no-recursion",
+      "category": "focused-lookup",
+      "prompt": "Where is the request rate limiter configured in this repository, and what is the default limit? Answer with the file and line.",
+      "expected_output": "A direct answer that names the configuration file and line and the default value. No sub-agents, no partitioning, no checkpoint or report files.",
+      "files": [],
+      "budget": {
+        "tier": "frontier",
+        "mode": "focused",
+        "max_depth": 0,
+        "max_subcalls": 0
+      },
+      "assertions": [
+        "The answer cites at least one path:line location for the rate limiter configuration",
+        "No sub-agent, worker, or recursive call is dispatched at any point in the run",
+        "No file is written under .rlm/ and no report file is created",
+        "The run finishes in fewer than 10 tool calls"
+      ],
+      "ledger_checks": [
+        {
+          "name": "direct citation at depth 0",
+          "ledger": {
+            "budget": {
+              "tier": "frontier",
+              "depth": 0,
+              "max_depth": 0
+            },
+            "coverage": {
+              "reviewed": [
+                "config/"
+              ],
+              "deferred": []
+            },
+            "findings": [
+              {
+                "title": "Rate limiter default",
+                "severity": "info",
+                "location": "config/limits.yaml:14",
+                "evidence": "default_rps: 50 under the gateway block",
+                "confidence": "high"
+              }
+            ],
+            "counterevidence": [
+              "No environment override found in deploy/ (searched for RATE_LIMIT)"
+            ],
+            "verification": [
+              "Read config/limits.yaml lines 10-20 directly"
+            ]
+          },
+          "valid": true,
+          "error_codes": []
+        },
+        {
+          "name": "citation without a line number",
+          "ledger": {
+            "budget": {
+              "tier": "frontier",
+              "depth": 0,
+              "max_depth": 0
+            },
+            "coverage": {
+              "reviewed": [
+                "config/"
+              ],
+              "deferred": []
+            },
+            "findings": [
+              {
+                "title": "Rate limiter default",
+                "severity": "info",
+                "location": "config/limits.yaml",
+                "evidence": "default_rps: 50 under the gateway block",
+                "confidence": "high"
+              }
+            ],
+            "counterevidence": [
+              "No environment override found in deploy/ (searched for RATE_LIMIT)"
+            ],
+            "verification": [
+              "Read config/limits.yaml lines 10-20 directly"
+            ]
+          },
+          "valid": false,
+          "error_codes": [
+            "bad-citation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "print-contract-large-log-slicing",
+      "category": "print-contract-log-slicing",
+      "prompt": "The file logs/app-2026-11-18.log is about 400 MB. Find when the payment-service errors started and what the first distinct error was.",
+      "expected_output": "The log is treated as an external object: counted, filtered, and sliced with commands. Only bounded excerpts enter the context. The answer gives the first error with its line number.",
+      "files": [
+        "logs/app-2026-11-18.log"
+      ],
+      "budget": {
+        "tier": "mid",
+        "mode": "standard",
+        "max_depth": 1,
+        "max_subcalls": 2
+      },
+      "assertions": [
+        "A match count is obtained before any matching lines are printed",
+        "The log is filtered with a programmatic command (grep, rg, awk, sed, or Python) before any excerpt is read",
+        "No single tool output placed in the context exceeds 200 lines or 10000 characters",
+        "Any slice larger than the print budget is written under .rlm/ and referenced by path",
+        "The answer cites the first error as path:line"
+      ],
+      "ledger_checks": [
+        {
+          "name": "log line citation",
+          "ledger": {
+            "budget": {
+              "tier": "mid",
+              "depth": 0,
+              "max_depth": 1
+            },
+            "coverage": {
+              "reviewed": [
+                "logs/app-2026-11-18.log"
+              ],
+              "deferred": []
+            },
+            "findings": [
+              {
+                "title": "First payment-service error",
+                "severity": "high",
+                "location": "logs/app-2026-11-18.log:1830412",
+                "evidence": "first ERROR line for payment-service: upstream connect timeout",
+                "confidence": "high"
+              }
+            ],
+            "counterevidence": [
+              "Earlier WARN lines exist from 03:10 but none are errors (count 212, sampled 5)"
+            ],
+            "verification": [
+              "Counted matches with grep -c before printing; printed 20 lines around the first match"
+            ]
+          },
+          "valid": true,
+          "error_codes": []
+        },
+        {
+          "name": "template placeholder left in the location",
+          "ledger": {
+            "budget": {
+              "tier": "mid",
+              "depth": 0,
+              "max_depth": 1
+            },
+            "coverage": {
+              "reviewed": [
+                "logs/app-2026-11-18.log"
+              ],
+              "deferred": []
+            },
+            "findings": [
+              {
+                "title": "First payment-service error",
+                "severity": "high",
+                "location": "<path>:<line>",
+                "evidence": "first ERROR line for payment-service: upstream connect timeout",
+                "confidence": "high"
+              }
+            ],
+            "counterevidence": [
+              "Earlier WARN lines exist from 03:10 but none are errors (count 212, sampled 5)"
+            ],
+            "verification": [
+              "Counted matches with grep -c before printing; printed 20 lines around the first match"
+            ]
+          },
+          "valid": false,
+          "error_codes": [
+            "placeholder-citation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "depth-1-monorepo-partition",
+      "category": "depth-1-repo-partition",
+      "prompt": "Audit this monorepo (about 2400 source files across services/, packages/, and infra/) for authorization bypasses. Report confirmed findings only.",
+      "expected_output": "A bounded inventory, a chunk worklist, one piloted partition, then at most 8 depth-1 partitions. Each worker returns the ledger format and passes validation before synthesis. Deferred scope is disclosed.",
+      "files": [],
+      "budget": {
+        "tier": "frontier",
+        "mode": "deep",
+        "max_depth": 1,
+        "max_subcalls": 8
+      },
+      "assertions": [
+        "scripts/rlm_inventory.py or an equivalent bounded inventory runs before any partition is dispatched",
+        "One pilot partition completes before the remaining partitions are dispatched",
+        "No more than 8 partitions are dispatched and no worker dispatches further workers",
+        "Every worker result passes scripts/rlm_ledger.py validation before it is used in the synthesis",
+        "The final report lists both reviewed and deferred scope"
+      ],
+      "ledger_checks": [
+        {
+          "name": "depth-1 worker ledger",
+          "ledger": {
+            "budget": {
+              "tier": "frontier",
+              "depth": 1,
+              "max_depth": 1
+            },
+            "coverage": {
+              "reviewed": [
+                "services/orders/"
+              ],
+              "deferred": [
+                "services/orders/migrations/ (schema only)"
+              ]
+            },
+            "findings": [
+              {
+                "title": "Order export skips tenant check",
+                "severity": "high",
+                "location": "services/orders/export.py:88-97",
+                "evidence": "handler reads order_id from the query and loads it without comparing tenant_id",
+                "confidence": "medium"
+              }
+            ],
+            "counterevidence": [
+              "services/orders/middleware.py:31 enforces tenant scope for /orders but the export route is mounted outside it"
+            ],
+            "verification": [
+              "Traced the route table in services/orders/routes.py:12 to confirm the export route bypasses the middleware"
+            ]
+          },
+          "valid": true,
+          "error_codes": []
+        },
+        {
+          "name": "worker omitted the verification section",
+          "ledger": {
+            "budget": {
+              "tier": "frontier",
+              "depth": 1,
+              "max_depth": 1
+            },
+            "coverage": {
+              "reviewed": [
+                "services/orders/"
+              ],
+              "deferred": [
+                "services/orders/migrations/ (schema only)"
+              ]
+            },
+            "findings": [
+              {
+                "title": "Order export skips tenant check",
+                "severity": "high",
+                "location": "services/orders/export.py:88-97",
+                "evidence": "handler reads order_id from the query and loads it without comparing tenant_id",
+                "confidence": "medium"
+              }
+            ],
+            "counterevidence": [
+              "services/orders/middleware.py:31 enforces tenant scope for /orders but the export route is mounted outside it"
+            ]
+          },
+          "valid": false,
+          "error_codes": [
+            "missing-section"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "depth-2-named-dependency-escalation",
+      "category": "depth-2-named-dependency",
+      "prompt": "While auditing services/billing, a worker found that invoice totals depend on a rounding helper generated at build time from packages/money/codegen. Decide whether billing totals can drift.",
+      "expected_output": "One depth-2 call, scoped to the named dependency, with a declared budget. Every other partition stays at depth 1. The conclusion cites the generated helper and the billing call site.",
+      "files": [],
+      "budget": {
+        "tier": "frontier",
+        "mode": "deep",
+        "max_depth": 2,
+        "max_subcalls": 12
+      },
+      "assertions": [
+        "The depth-2 call names the unresolved dependency (the generated rounding helper) in its budget",
+        "Exactly one depth-2 call is made and it is scoped to packages/money/codegen",
+        "The depth-2 worker ledger declares depth 2 and max_depth 2",
+        "No other partition is deepened beyond depth 1"
+      ],
+      "ledger_checks": [
+        {
+          "name": "depth 2 with a named dependency and budget",
+          "ledger": {
+            "budget": {
+              "tier": "frontier",
+              "depth": 2,
+              "max_depth": 2,
+              "named_dependency": "generated rounding helper in packages/money/codegen, used by services/billing/totals.py:54"
+            },
+            "coverage": {
+              "reviewed": [
+                "packages/money/codegen/"
+              ],
+              "deferred": []
+            },
+            "findings": [
+              {
+                "title": "Generated helper rounds half-even, billing assumes half-up",
+                "severity": "medium",
+                "location": "packages/money/codegen/templates/round.py.tmpl:9",
+                "evidence": "template emits ROUND_HALF_EVEN; billing totals compare against half-up expectations",
+                "confidence": "medium"
+              }
+            ],
+            "counterevidence": [
+              "The 2 decimal currencies in tests never hit a tie, which is why the suite passes"
+            ],
+            "verification": [
+              "Rendered the template for EUR and evaluated 0.125: result 0.12, billing expects 0.13"
+            ]
+          },
+          "valid": true,
+          "error_codes": []
+        },
+        {
+          "name": "depth 2 without a named dependency",
+          "ledger": {
+            "budget": {
+              "tier": "frontier",
+              "depth": 2,
+              "max_depth": 2
+            },
+            "coverage": {
+              "reviewed": [
+                "packages/money/codegen/"
+              ],
+              "deferred": []
+            },
+            "findings": [
+              {
+                "title": "Generated helper rounds half-even, billing assumes half-up",
+                "severity": "medium",
+                "location": "packages/money/codegen/templates/round.py.tmpl:9",
+                "evidence": "template emits ROUND_HALF_EVEN; billing totals compare against half-up expectations",
+                "confidence": "medium"
+              }
+            ],
+            "counterevidence": [
+              "The 2 decimal currencies in tests never hit a tie, which is why the suite passes"
+            ],
+            "verification": [
+              "Rendered the template for EUR and evaluated 0.125: result 0.12, billing expects 0.13"
+            ]
+          },
+          "valid": false,
+          "error_codes": [
+            "depth-without-dependency"
+          ]
+        },
+        {
+          "name": "depth 2 beyond the declared max_depth",
+          "ledger": {
+            "budget": {
+              "tier": "frontier",
+              "depth": 2,
+              "max_depth": 1,
+              "named_dependency": "generated rounding helper in packages/money/codegen, used by services/billing/totals.py:54"
+            },
+            "coverage": {
+              "reviewed": [
+                "packages/money/codegen/"
+              ],
+              "deferred": []
+            },
+            "findings": [
+              {
+                "title": "Generated helper rounds half-even, billing assumes half-up",
+                "severity": "medium",
+                "location": "packages/money/codegen/templates/round.py.tmpl:9",
+                "evidence": "template emits ROUND_HALF_EVEN; billing totals compare against half-up expectations",
+                "confidence": "medium"
+              }
+            ],
+            "counterevidence": [
+              "The 2 decimal currencies in tests never hit a tie, which is why the suite passes"
+            ],
+            "verification": [
+              "Rendered the template for EUR and evaluated 0.125: result 0.12, billing expects 0.13"
+            ]
+          },
+          "valid": false,
+          "error_codes": [
+            "depth-unbudgeted"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "small-model-budget-halt",
+      "category": "small-model-budget-halt",
+      "prompt": "You are running on a small local model. Review src/ (about 180 files) for unsafe deserialization and list the confirmed cases.",
+      "expected_output": "Script-built partitions, at most 4 sub-calls, nothing at depth 2. When the budget is spent the run stops and reports the unreviewed chunks as deferred instead of continuing or re-checking.",
+      "files": [],
+      "budget": {
+        "tier": "small",
+        "mode": "standard",
+        "max_depth": 1,
+        "max_subcalls": 4
+      },
+      "assertions": [
+        "Partitions come from scripts/rlm_inventory.py output and not from a model-invented decomposition",
+        "No more than 4 sub-calls are made in total and no call runs at depth 2",
+        "When the budget is spent the run stops and lists the unreviewed chunks as deferred",
+        "No claim is re-verified more than once"
+      ],
+      "ledger_checks": [
+        {
+          "name": "small tier halts with deferred chunks",
+          "ledger": {
+            "budget": {
+              "tier": "small",
+              "depth": 1,
+              "max_depth": 1
+            },
+            "coverage": {
+              "reviewed": [
+                "src/io/ (chunk c001)",
+                "src/api/ (chunk c002)"
+              ],
+              "deferred": [
+                "chunk c003 src/workers/ (budget spent)",
+                "chunk c004 src/cli/ (budget spent)"
+              ]
+            },
+            "findings": [
+              {
+                "title": "pickle.loads on request body",
+                "severity": "high",
+                "location": "src/api/upload.py:41",
+                "evidence": "body bytes passed to pickle.loads without a type check",
+                "confidence": "high"
+              }
+            ],
+            "counterevidence": [
+              "src/io/cache.py:17 unpickles only files the service wrote itself"
+            ],
+            "verification": [
+              "Static trace only; no test was run because the budget of 4 sub-calls was spent"
+            ]
+          },
+          "valid": true,
+          "error_codes": []
+        },
+        {
+          "name": "small tier attempts depth 2",
+          "ledger": {
+            "budget": {
+              "tier": "small",
+              "depth": 2,
+              "max_depth": 2,
+              "named_dependency": "loader registry in src/io/registry.py"
+            },
+            "coverage": {
+              "reviewed": [
+                "src/io/ (chunk c001)",
+                "src/api/ (chunk c002)"
+              ],
+              "deferred": [
+                "chunk c003 src/workers/ (budget spent)",
+                "chunk c004 src/cli/ (budget spent)"
+              ]
+            },
+            "findings": [
+              {
+                "title": "pickle.loads on request body",
+                "severity": "high",
+                "location": "src/api/upload.py:41",
+                "evidence": "body bytes passed to pickle.loads without a type check",
+                "confidence": "high"
+              }
+            ],
+            "counterevidence": [
+              "src/io/cache.py:17 unpickles only files the service wrote itself"
+            ],
+            "verification": [
+              "Static trace only; no test was run because the budget of 4 sub-calls was spent"
+            ]
+          },
+          "valid": false,
+          "error_codes": [
+            "depth-over-tier"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cross-family-verification-trigger",
+      "category": "cross-family-verification",
+      "prompt": "A worker reports with medium confidence that the session cookie is still accepted after logout in services/auth, but a second search found a revocation check. Decide whether this is a real vulnerability before it goes in the report.",
+      "expected_output": "High impact plus conflicting evidence triggers exactly one independent check, from a different model family when the harness has one. The disagreement is settled against source lines and a focused test.",
+      "files": [],
+      "budget": {
+        "tier": "frontier",
+        "mode": "standard",
+        "max_depth": 1,
+        "max_subcalls": 4
+      },
+      "assertions": [
+        "Exactly one independent verification is requested for the conflicting high-impact claim",
+        "The verifier is a different model family when the harness exposes one, otherwise the report states that same-family verification was used",
+        "The verifier receives the claim and the source locations, not the first worker's conclusion as fact",
+        "The disagreement is resolved by citing source lines or a test result, not by a confidence score"
+      ],
+      "ledger_checks": [
+        {
+          "name": "independently verified high-impact finding",
+          "ledger": {
+            "budget": {
+              "tier": "frontier",
+              "depth": 1,
+              "max_depth": 1
+            },
+            "coverage": {
+              "reviewed": [
+                "services/auth/session.py",
+                "services/auth/logout.py"
+              ],
+              "deferred": []
+            },
+            "findings": [
+              {
+                "title": "Session cookie accepted after logout until cache expiry",
+                "severity": "high",
+                "location": "services/auth/session.py:72-80, services/auth/logout.py:19",
+                "evidence": "logout deletes the database row but validate() trusts the 5 minute cache entry first",
+                "confidence": "high"
+              }
+            ],
+            "counterevidence": [
+              "services/auth/session.py:91 does check revocation, but only on a cache miss"
+            ],
+            "verification": [
+              "Independent reviewer from a different model family traced the same path from source locations only and reached the same result",
+              "Focused test: logout then replay cookie within 5 minutes returned 200"
+            ]
+          },
+          "valid": true,
+          "error_codes": []
+        },
+        {
+          "name": "verification left as a placeholder",
+          "ledger": {
+            "budget": {
+              "tier": "frontier",
+              "depth": 1,
+              "max_depth": 1
+            },
+            "coverage": {
+              "reviewed": [
+                "services/auth/session.py",
+                "services/auth/logout.py"
+              ],
+              "deferred": []
+            },
+            "findings": [
+              {
+                "title": "Session cookie accepted after logout until cache expiry",
+                "severity": "high",
+                "location": "services/auth/session.py:72-80, services/auth/logout.py:19",
+                "evidence": "logout deletes the database row but validate() trusts the 5 minute cache entry first",
+                "confidence": "high"
+              }
+            ],
+            "counterevidence": [
+              "services/auth/session.py:91 does check revocation, but only on a cache miss"
+            ],
+            "verification": [
+              "TBD"
+            ]
+          },
+          "valid": false,
+          "error_codes": [
+            "empty-section"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "direct-evidence-skips-verification",
+      "category": "cross-family-verification",
+      "prompt": "How long does a login session last in services/auth? Give the configured value and where it is set.",
+      "expected_output": "A source-backed fact answered from one direct read. No independent reviewer, no second model, no recursive self-check.",
+      "files": [],
+      "budget": {
+        "tier": "frontier",
+        "mode": "focused",
+        "max_depth": 0,
+        "max_subcalls": 0
+      },
+      "assertions": [
+        "The answer cites the configuration constant as path:line",
+        "No independent verifier or second model is invoked for this source-backed fact",
+        "No sub-agent, worker, or recursive call is dispatched at any point in the run"
+      ],
+      "ledger_checks": [
+        {
+          "name": "direct fact with no verifier",
+          "ledger": {
+            "budget": {
+              "tier": "frontier",
+              "depth": 0,
+              "max_depth": 0
+            },
+            "coverage": {
+              "reviewed": [
+                "services/auth/config.py"
+              ],
+              "deferred": []
+            },
+            "findings": [
+              {
+                "title": "Session lifetime is 30 minutes",
+                "severity": "info",
+                "location": "services/auth/config.py:12",
+                "evidence": "SESSION_TTL_SECONDS = 1800",
+                "confidence": "high"
+              }
+            ],
+            "counterevidence": [
+              "No override in deploy/ or environment templates (searched SESSION_TTL)"
+            ],
+            "verification": [
+              "Direct read of the constant; no independent verification needed for a source-backed fact"
+            ]
+          },
+          "valid": true,
+          "error_codes": []
+        }
+      ]
+    }
+  ]
+}

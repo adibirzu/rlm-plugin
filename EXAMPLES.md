@@ -1,10 +1,12 @@
-# RLM v3.1 examples
+# RLM v4.0 examples
 
-Invoke the installed skill as:
+Invoke the installed skill in Claude Code as:
 
 ```text
 /rlm:rlm <task> [path]
 ```
+
+Other harnesses use their own skill syntax, for example `$rlm <task>` in Codex and `/rlm <task>` in Gemini CLI, Cursor, and Grok. The examples below use the Claude Code form.
 
 ## Focused lookup
 
@@ -90,7 +92,55 @@ For a deep audit where recovery artifacts are useful:
 /rlm:rlm "perform a full architecture review; keep concise redacted checkpoints so the work can resume after compaction" .
 ```
 
-Checkpoints may be written under `.rlm/<date>-<topic>/` after confirming the directory is ignored. RLM does not delete older checkpoints automatically.
+Scratch state is written under `.rlm/<topic>/` after confirming the directory is ignored. RLM does not delete older checkpoints automatically.
+
+## Large logs and documents
+
+```text
+/rlm:rlm "logs/app-2026-11-18.log is about 400 MB; find when the payment errors started and the first distinct error" logs/
+```
+
+RLM counts and filters the log with commands, prints only bounded excerpts, and keeps larger slices under `.rlm/<topic>/`.
+
+## Small or local models
+
+```text
+/rlm:rlm "you are a small local model; review src/ for unsafe deserialization within the small-tier budget" src/
+```
+
+The small tier takes its partitions from the inventory script, makes at most four sub-calls, never goes to depth 2, and reports unreviewed chunks as deferred when the budget is spent.
+
+## Independent verification
+
+```text
+/rlm:rlm "confirm whether sessions survive logout in services/auth; get an independent check before reporting it" services/auth/
+```
+
+A high-impact claim with conflicting evidence gets one independent reviewer, from a different model family when the harness can reach one.
+
+## Helper scripts
+
+Build a worklist without loading any file content:
+
+```bash
+python3 skills/rlm/scripts/rlm_inventory.py services/ --manifest .rlm/audit/manifest.json
+```
+
+Validate a worker result against the scope it reviewed:
+
+```bash
+python3 skills/rlm/scripts/rlm_ledger.py .rlm/audit/worker-01.md --root services/ --tier mid --depth 1
+```
+
+## Harness installation
+
+```bash
+./install.sh --check --json
+./install.sh --sync-harnesses
+./install.sh --sync-harnesses --backup
+```
+
+The first command reports drift without writing. The second links the skill into every harness that is present. The third also moves differing local copies to `~/.rlm-skill-backups/`.
 
 ## Better requests
 

@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import re
 import subprocess
 import tempfile
 import unittest
@@ -31,17 +32,166 @@ class PluginPackageTests(unittest.TestCase):
         manifest = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
 
         self.assertEqual(manifest["name"], "rlm")
-        self.assertEqual(manifest["version"], "3.2.0")
+        self.assertEqual(manifest["version"], "4.0.0")
         self.assertTrue((ROOT / "skills/rlm/SKILL.md").is_file())
         self.assertFalse((ROOT / "commands/rlm.md").exists())
 
-    def test_skill_references_are_packaged(self):
-        skill = ROOT / "skills/rlm/SKILL.md"
-        reference = ROOT / "skills/rlm/references/research-basis.md"
+    def test_skill_resources_are_packaged(self):
+        skill_dir = ROOT / "skills/rlm"
+        resources = (
+            "SKILL.md",
+            "references/research-basis.md",
+            "references/harness-adapters.md",
+            "scripts/rlm_inventory.py",
+            "scripts/rlm_ledger.py",
+            "evals/rlm_eval_cases.json",
+        )
 
-        self.assertTrue(skill.is_file())
-        self.assertTrue(reference.is_file())
-        self.assertGreater(reference.stat().st_size, 500)
+        for resource in resources:
+            with self.subTest(resource=resource):
+                path = skill_dir / resource
+                self.assertTrue(path.is_file())
+                self.assertGreater(path.stat().st_size, 500)
+
+    def split_skill(self):
+        text = (ROOT / "skills/rlm/SKILL.md").read_text()
+        _, frontmatter, body = text.split("---\n", 2)
+        fields = dict(
+            line.split(": ", 1) for line in frontmatter.splitlines() if ": " in line
+        )
+        return fields, body
+
+    def test_skill_frontmatter_follows_the_agent_skills_spec(self):
+        fields, _ = self.split_skill()
+
+        self.assertEqual(set(fields), {"name", "description"})
+        self.assertEqual(fields["name"], "rlm")
+        self.assertEqual(fields["name"], (ROOT / "skills/rlm").name)
+        self.assertLessEqual(len(fields["description"]), 1024)
+        self.assertGreater(len(fields["description"]), 200)
+        self.assertIn("Use this skill when", fields["description"])
+
+    def test_skill_body_stays_inside_the_progressive_disclosure_budget(self):
+        _, body = self.split_skill()
+
+        self.assertLess(len(body.splitlines()), 500)
+        self.assertLess(len(body.split()), 3500)
+
+    def test_skill_links_resolve_one_level_deep(self):
+        skill_dir = ROOT / "skills/rlm"
+        _, body = self.split_skill()
+        links = set(re.findall(r"\]\(([^)#]+)\)", body))
+        mentioned = set(re.findall(r"`((?:scripts|references|evals)/[\w./-]+)`", body))
+
+        self.assertGreaterEqual(len(links), 2)
+        for link in links | mentioned:
+            with self.subTest(link=link):
+                self.assertFalse(link.startswith(("/", "..")))
+                self.assertLessEqual(len(pathlib.PurePosixPath(link).parts), 2)
+                self.assertTrue((skill_dir / link).is_file())
+        for required in (
+            "references/research-basis.md",
+            "references/harness-adapters.md",
+            "scripts/rlm_inventory.py",
+            "scripts/rlm_ledger.py",
+        ):
+            self.assertIn(required, links | mentioned)
+
+    def test_skill_states_the_v4_contracts(self):
+        _, body = self.split_skill()
+        headings = set(re.findall(r"^## (.+)$", body, flags=re.M))
+
+        for heading in (
+            "Safety and trust boundaries",
+            "Context as an external environment",
+            "Effort contract",
+            "Model-tier recursion budgets",
+            "Partition and recurse",
+            "Reflective verification",
+            "Evidence ledger",
+            "Output contract",
+        ):
+            with self.subTest(heading=heading):
+                self.assertIn(heading, headings)
+
+        for phrase in (
+            "Print Contract",
+            ".rlm/<topic>/",
+            "named unresolved dependency",
+            "different model family",
+            "## Budget",
+            "## Verification",
+            "proof gap",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, body)
+
+    def test_research_basis_cites_every_source(self):
+        reference = (ROOT / "skills/rlm/references/research-basis.md").read_text()
+
+        for source in (
+            "arxiv.org/abs/2512.24601",
+            "github.com/alexzhang13/rlm",
+            "arxiv.org/abs/2603.02615",
+            "arxiv.org/abs/2603.15653",
+            "agentskills.io",
+            "Print Contract",
+        ):
+            with self.subTest(source=source):
+                self.assertIn(source, reference)
+
+    def test_harness_adapters_cover_every_harness(self):
+        reference = (ROOT / "skills/rlm/references/harness-adapters.md").read_text()
+        installer = (ROOT / "install.sh").read_text()
+
+        for harness in (
+            "Claude Code", "Codex", "Gemini CLI", "Antigravity", "Cursor",
+            "OpenCode", "Pi", "Grok", "Cline", "Agent Skills directory",
+        ):
+            with self.subTest(harness=harness):
+                self.assertIn(f"## {harness}", reference)
+        for directory in (
+            ".claude/skills", ".codex/skills", ".gemini/skills",
+            ".gemini/config/skills", ".agents/skills", ".cursor/skills",
+            ".config/opencode/skills", ".opencode/skills", ".pi/skills",
+            ".grok/skills", ".cline/skills",
+        ):
+            with self.subTest(directory=directory):
+                self.assertIn(directory, reference)
+                self.assertIn(directory, installer)
+        for topic in ("Invocation", "Delegation", "Scratchpad", "Fallback"):
+            self.assertGreaterEqual(reference.count(f"- {topic}:"), 10, topic)
+
+    def test_repository_text_hygiene(self):
+        listing = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+            cwd=ROOT, capture_output=True, text=True,
+        )
+        if listing.returncode != 0:
+            self.skipTest("not a git checkout")
+        banned = ("\u2014", "".join(("cap", "tain")))
+
+        for name in listing.stdout.splitlines():
+            path = ROOT / name
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text()
+            except UnicodeDecodeError:
+                continue
+            for word in banned:
+                with self.subTest(file=name, banned=ascii(word)):
+                    self.assertNotIn(word, text.lower())
+
+    def test_no_stale_release_version_remains(self):
+        for name in (
+            "README.md", "IMPLEMENTATION.md", "EXAMPLES.md",
+            ".claude-plugin/plugin.json", ".codex-plugin/plugin.json",
+        ):
+            with self.subTest(file=name):
+                text = (ROOT / name).read_text()
+                self.assertNotIn("3.2.0", text)
+                self.assertNotRegex(text, r"\bv3\.[0-9]\b")
 
     def test_codex_manifest_matches_shared_plugin(self):
         claude = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
@@ -61,6 +211,7 @@ class PluginPackageTests(unittest.TestCase):
             "If memory tools are unavailable",
             "If sub-agents are unavailable",
             "Do not delete prior checkpoints automatically",
+            "Never expose secrets",
             "Inspect dependency lockfiles",
             "$ARGUMENTS",
         )
@@ -90,6 +241,7 @@ class PluginPackageTests(unittest.TestCase):
         self.assertNotIn("plugins/cache", installer)
         self.assertNotIn("settings.json", installer)
         self.assertNotIn("rm -rf", installer)
+        self.assertNotRegex(installer, r"\brm\b")
 
     def test_installer_invokes_marketplace_and_plugin_commands(self):
         with tempfile.TemporaryDirectory() as temp_dir:

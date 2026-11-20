@@ -1,0 +1,344 @@
+import json
+import os
+import pathlib
+import subprocess
+import tempfile
+import unittest
+
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+INSTALLER = ROOT / "install.sh"
+
+HARNESS_DIRS = (
+    ".claude/skills",
+    ".codex/skills",
+    ".gemini/skills",
+    ".gemini/config/skills",
+    ".agents/skills",
+    ".cursor/skills",
+    ".config/opencode/skills",
+    ".opencode/skills",
+    ".pi/skills",
+    ".grok/skills",
+    ".cline/skills",
+)
+
+
+def snapshot(directory):
+    entries = []
+    for path in sorted(directory.rglob("*")):
+        relative = path.relative_to(directory).as_posix()
+        if path.is_symlink():
+            entries.append((relative, "link", os.readlink(path)))
+        elif path.is_dir():
+            entries.append((relative, "dir", ""))
+        else:
+            entries.append((relative, "file", path.read_text()))
+    return entries
+
+
+class HarnessSyncTests(unittest.TestCase):
+    shell = "bash"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = pathlib.Path(self._tmp.name).resolve()
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+        self.source = self.tmp / "checkout/skills/rlm"
+        self.write_skill(self.source, "canonical v4\n")
+
+    def write_skill(self, directory, body):
+        (directory / "references").mkdir(parents=True)
+        (directory / "SKILL.md").write_text(f"---\nname: rlm\n---\n{body}")
+        (directory / "references/notes.md").write_text("notes\n")
+
+    def skills(self, harness):
+        directory = self.home / harness
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+
+    def run_installer(self, *args, source=None, home=None):
+        command = [self.shell, str(INSTALLER), *args]
+        command += ["--source", str(source or self.source)]
+        command += ["--home", str(home or self.home)]
+        return subprocess.run(
+            command,
+            cwd=self.tmp,
+            env={**os.environ, "PATH": "/usr/bin:/bin"},
+            capture_output=True,
+            text=True,
+        )
+
+    def check(self):
+        result = self.run_installer("--check", "--json")
+        report = json.loads(result.stdout)
+        states = {entry["dir"]: entry["state"] for entry in report["harnesses"]}
+        return result, report, states
+
+    def sync(self, *args):
+        return self.run_installer("--sync-harnesses", *args)
+
+    def assert_linked(self, harness):
+        target = self.home / harness / "rlm"
+        self.assertTrue(target.is_symlink(), f"{target} is not a symlink")
+        self.assertEqual(target.resolve(), self.source.resolve())
+
+    def backups(self):
+        root = self.home / ".rlm-skill-backups"
+        return sorted(root.glob("*/*/rlm")) if root.is_dir() else []
+
+    def test_check_reports_every_harness_directory(self):
+        self.skills(".claude/skills")
+        os.symlink(self.source, self.home / ".claude/skills/rlm")
+        self.write_skill(self.skills(".gemini/config/skills") / "rlm", "canonical v4\n")
+        self.write_skill(self.skills(".grok/skills") / "rlm", "local edits\n")
+        self.skills(".cursor/skills")
+        (self.home / ".pi").mkdir()
+
+        result, report, states = self.check()
+
+        self.assertEqual(result.returncode, 3)
+        self.assertEqual(tuple(e["dir"] for e in report["harnesses"]), HARNESS_DIRS)
+        self.assertEqual(report["source"], str(self.source))
+        self.assertEqual(report["home"], str(self.home))
+        self.assertFalse(report["in_sync"])
+        self.assertEqual(states[".claude/skills"], "linked")
+        self.assertEqual(states[".gemini/skills"], "missing")
+        self.assertEqual(states[".gemini/config/skills"], "copy-identical")
+        self.assertEqual(states[".grok/skills"], "copy-diverged")
+        self.assertEqual(states[".cursor/skills"], "missing")
+        self.assertEqual(states[".pi/skills"], "missing")
+        self.assertEqual(states[".cline/skills"], "harness-absent")
+        self.assertEqual(report["summary"]["missing"], 3)
+        self.assertEqual(report["summary"]["harness-absent"], 5)
+        self.assertEqual(
+            sum(report["summary"].values()), len(HARNESS_DIRS)
+        )
+        for entry in report["harnesses"]:
+            self.assertEqual(entry["path"], str(self.home / entry["dir"] / "rlm"))
+
+    def test_check_never_writes(self):
+        self.write_skill(self.skills(".grok/skills") / "rlm", "local edits\n")
+        self.skills(".cursor/skills")
+        (self.home / ".pi").mkdir()
+        before = snapshot(self.home)
+
+        self.run_installer("--check")
+        self.run_installer("--check", "--json")
+
+        self.assertEqual(snapshot(self.home), before)
+
+    def test_check_text_output_and_exit_codes(self):
+        self.skills(".cursor/skills")
+
+        drift = self.run_installer("--check")
+        self.sync()
+        clean = self.run_installer("--check")
+
+        self.assertEqual(drift.returncode, 3)
+        self.assertRegex(drift.stdout, r"missing\s+\.cursor/skills")
+        self.assertEqual(clean.returncode, 0)
+        self.assertRegex(clean.stdout, r"linked\s+\.cursor/skills")
+
+    def test_sync_links_present_harnesses_and_skips_absent_ones(self):
+        self.skills(".cursor/skills")
+        (self.home / ".pi").mkdir()
+        (self.home / ".config/opencode").mkdir(parents=True)
+
+        result = self.sync()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for harness in (".cursor/skills", ".pi/skills", ".config/opencode/skills"):
+            self.assert_linked(harness)
+        self.assertFalse((self.home / ".cline").exists())
+        self.assertFalse((self.home / ".claude").exists())
+        self.assertEqual(self.backups(), [])
+
+    def test_sync_replaces_an_identical_copy_and_keeps_it_as_a_backup(self):
+        copy = self.skills(".gemini/config/skills") / "rlm"
+        self.write_skill(copy, "canonical v4\n")
+
+        result = self.sync()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_linked(".gemini/config/skills")
+        backups = self.backups()
+        self.assertEqual(len(backups), 1)
+        self.assertIn("canonical v4", (backups[0] / "SKILL.md").read_text())
+
+    def test_identical_copy_ignores_python_cache_noise(self):
+        copy = self.skills(".claude/skills") / "rlm"
+        self.write_skill(copy, "canonical v4\n")
+        (copy / "scripts").mkdir()
+        (self.source / "scripts/__pycache__").mkdir(parents=True)
+        (self.source / "scripts/__pycache__/x.pyc").write_text("cache")
+
+        _, _, states = self.check()
+
+        self.assertEqual(states[".claude/skills"], "copy-identical")
+
+    def test_sync_refuses_a_diverged_copy_without_backup(self):
+        diverged = self.skills(".grok/skills") / "rlm"
+        self.write_skill(diverged, "local edits\n")
+        self.skills(".cursor/skills")
+
+        result = self.sync()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("--backup", result.stderr)
+        self.assertFalse(diverged.is_symlink())
+        self.assertIn("local edits", (diverged / "SKILL.md").read_text())
+        self.assert_linked(".cursor/skills")
+        self.assertEqual(self.backups(), [])
+
+    def test_sync_with_backup_moves_a_diverged_copy_aside(self):
+        diverged = self.skills(".grok/skills") / "rlm"
+        self.write_skill(diverged, "local edits\n")
+
+        result = self.sync("--backup")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_linked(".grok/skills")
+        backups = self.backups()
+        self.assertEqual(len(backups), 1)
+        self.assertIn("local edits", (backups[0] / "SKILL.md").read_text())
+        self.assertIn(str(backups[0]), result.stdout)
+
+    def test_agents_alias_of_codex_is_synced_once(self):
+        codex = self.skills(".codex/skills")
+        (self.home / ".agents").mkdir()
+        os.symlink(codex, self.home / ".agents/skills")
+
+        _, _, before = self.check()
+        result = self.sync()
+        _, report, after = self.check()
+
+        self.assertEqual(before[".codex/skills"], "missing")
+        self.assertEqual(before[".agents/skills"], "alias")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_linked(".codex/skills")
+        self.assertTrue((self.home / ".agents/skills").is_symlink())
+        self.assertEqual(sorted(p.name for p in codex.iterdir()), ["rlm"])
+        self.assertFalse((self.source / "rlm").exists())
+        self.assertEqual(after[".agents/skills"], "alias")
+        self.assertTrue(report["in_sync"])
+
+    def test_sync_repoints_a_stale_or_broken_symlink(self):
+        other = self.tmp / "old-checkout/skills/rlm"
+        self.write_skill(other, "old\n")
+        os.symlink(other, self.skills(".claude/skills") / "rlm")
+        os.symlink(self.tmp / "gone", self.skills(".codex/skills") / "rlm")
+
+        _, _, before = self.check()
+        result = self.sync()
+
+        self.assertEqual(before[".claude/skills"], "stale-link")
+        self.assertEqual(before[".codex/skills"], "stale-link")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_linked(".claude/skills")
+        self.assert_linked(".codex/skills")
+        self.assertIn("old", (other / "SKILL.md").read_text())
+        self.assertFalse((other / "rlm").exists())
+
+    def test_sync_is_idempotent(self):
+        self.write_skill(self.skills(".claude/skills") / "rlm", "canonical v4\n")
+        self.skills(".cursor/skills")
+        self.sync()
+        before = snapshot(self.home)
+
+        result = self.sync()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(snapshot(self.home), before)
+
+    def test_source_inside_a_harness_directory_is_left_alone(self):
+        source = self.skills(".claude/skills") / "rlm"
+        self.write_skill(source, "lives in the harness\n")
+        self.skills(".cursor/skills")
+
+        result = self.run_installer("--sync-harnesses", source=source)
+        report = json.loads(self.run_installer("--check", "--json", source=source).stdout)
+        states = {entry["dir"]: entry["state"] for entry in report["harnesses"]}
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(source.is_symlink())
+        self.assertIn("lives in the harness", (source / "SKILL.md").read_text())
+        self.assertEqual(states[".claude/skills"], "source")
+        self.assertEqual((self.home / ".cursor/skills/rlm").resolve(), source.resolve())
+        self.assertTrue(report["in_sync"])
+
+    def test_non_directory_targets_are_conflicts(self):
+        (self.skills(".claude/skills") / "rlm").write_text("a file\n")
+        (self.home / ".cursor").mkdir()
+        (self.home / ".cursor/skills").write_text("not a directory\n")
+
+        _, _, states = self.check()
+        result = self.sync("--backup")
+
+        self.assertEqual(states[".claude/skills"], "conflict")
+        self.assertEqual(states[".cursor/skills"], "conflict")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual((self.home / ".claude/skills/rlm").read_text(), "a file\n")
+
+    def test_paths_with_spaces_and_quotes_survive_json(self):
+        home = self.tmp / 'ho me "x"'
+        (home / ".cursor/skills").mkdir(parents=True)
+
+        result = self.run_installer("--check", "--json", home=home)
+        report = json.loads(result.stdout)
+        sync = self.run_installer("--sync-harnesses", home=home)
+
+        self.assertEqual(report["home"], str(home))
+        self.assertEqual(sync.returncode, 0, sync.stderr)
+        self.assertEqual((home / ".cursor/skills/rlm").resolve(), self.source.resolve())
+
+    def test_invalid_source_or_home_is_a_usage_error(self):
+        empty = self.tmp / "empty"
+        empty.mkdir()
+        self.skills(".cursor/skills")
+        before = snapshot(self.home)
+
+        bad_source = self.run_installer("--sync-harnesses", source=empty)
+        bad_home = self.run_installer("--check", home=self.tmp / "nope")
+        missing_value = subprocess.run(
+            [self.shell, str(INSTALLER), "--check", "--source"],
+            capture_output=True, text=True,
+        )
+        unknown = subprocess.run(
+            [self.shell, str(INSTALLER), "--sync-harnesses", "--force"],
+            capture_output=True, text=True,
+        )
+        json_sync = self.run_installer("--sync-harnesses", "--json")
+
+        for result in (bad_source, bad_home, missing_value, unknown, json_sync):
+            self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("SKILL.md", bad_source.stderr)
+        self.assertEqual(snapshot(self.home), before)
+
+    def test_default_source_is_the_packaged_skill(self):
+        result = subprocess.run(
+            [self.shell, str(INSTALLER), "--check", "--json", "--home", str(self.home)],
+            cwd=self.tmp, capture_output=True, text=True,
+        )
+
+        self.assertEqual(json.loads(result.stdout)["source"], str(ROOT / "skills/rlm"))
+
+    def test_help_documents_the_harness_modes(self):
+        result = subprocess.run(
+            [self.shell, str(INSTALLER), "--help"], capture_output=True, text=True
+        )
+
+        self.assertEqual(result.returncode, 0)
+        for flag in ("--sync-harnesses", "--check", "--backup", "--source", "--home"):
+            self.assertIn(flag, result.stdout)
+
+
+@unittest.skipUnless(os.path.exists("/bin/bash"), "no system bash")
+class SystemBashHarnessSyncTests(HarnessSyncTests):
+    shell = "/bin/bash"
+
+
+if __name__ == "__main__":
+    unittest.main()

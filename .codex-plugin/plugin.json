@@ -1,6 +1,6 @@
 {
   "name": "rlm",
-  "version": "3.2.0",
+  "version": "4.0.0",
   "description": "Recursive, evidence-backed analysis for repositories and large document sets with safe capability fallbacks",
   "author": {
     "name": "adibirzu",

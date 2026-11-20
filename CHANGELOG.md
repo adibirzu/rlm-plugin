@@ -2,6 +2,24 @@
 
 All notable changes to the RLM Plugin are documented in this file.
 
+## [4.0.0] - 2026-11-20
+
+### Added
+- Print Contract: raw content stays in `.rlm/<topic>/` scratch files and only bounded summaries enter the context
+- Model-tier recursion budgets for frontier, mid, and small models, with guardrails against overthinking
+- `skills/rlm/scripts/rlm_inventory.py`: bounded inventory and chunk worklist with symlink escape protection and a byte-capped summary
+- `skills/rlm/scripts/rlm_ledger.py`: validator for worker results and evidence ledgers in Markdown or JSON
+- `skills/rlm/evals/rlm_eval_cases.json`: seven benchmark and regression cases, schema-checked in the test suite
+- `skills/rlm/references/harness-adapters.md`: invocation, delegation, scratchpad, and fallback notes for ten harnesses
+- `install.sh --check` and `install.sh --sync-harnesses` for eleven harness skill directories, with alias detection and backups
+- Selective verification matrix, including an independent reviewer from a different model family for high-impact uncertain claims
+
+### Changed
+- **Breaking:** the worker result format now requires a `Verification` section and carries a `Budget` section
+- `SKILL.md` restructured for progressive disclosure, with a description that states when to use the skill
+- Research reference rewritten against the current paper versions, separating published results from project policy
+- CI runs the unit tests on Python 3.11 and 3.12
+
 ## [3.2.0] - 2026-08-23
 
 ### Added
@@ -50,21 +68,21 @@ All notable changes to the RLM Plugin are documented in this file.
 ## [3.0.0] - 2026-02-01
 
 ### Added
-- **E1: Dual Execution Modes** — Quick Scan (~5K tokens) for simple queries; Deep Audit (~30-60K tokens) for comprehensive analysis
-- **E2: Smart Directory Pruning** — Auto-excludes .git, node_modules, dist, build, __pycache__, and 15+ noise directories
-- **E3: Git-Aware Incremental Analysis** — Stores commit SHA in memory; on re-analysis, diffs against prior commit and analyzes only changed files
-- **E4: Timestamped Checkpoints** — Uses `.rlm/<YYYY-MM-DD>/` directories with auto-cleanup of entries older than 7 days
-- **E5: CLAUDE.md Awareness** — Reads project-level CLAUDE.md to skip redundant structure discovery
-- **E6: FINAL Output Protocol** — Structured sub-agent output format for reliable deduplication and severity classification
-- **E7: Background Scanning** — Repos with >500 files use `run_in_background: true` for inventory agents
-- **E8: Adaptive Sub-Agent Budgets** — Auto-splits work when scope exceeds 500 files or 50K lines per agent
-- **E9: Binary File Filtering** — Skips 30+ binary extensions from Read and Grep operations
+- **E1: Dual Execution Modes**: Quick Scan (~5K tokens) for simple queries; Deep Audit (~30-60K tokens) for comprehensive analysis
+- **E2: Smart Directory Pruning**: Auto-excludes .git, node_modules, dist, build, __pycache__, and 15+ noise directories
+- **E3: Git-Aware Incremental Analysis**: Stores commit SHA in memory; on re-analysis, diffs against prior commit and analyzes only changed files
+- **E4: Timestamped Checkpoints**: Uses `.rlm/<YYYY-MM-DD>/` directories with auto-cleanup of entries older than 7 days
+- **E5: CLAUDE.md Awareness**: Reads project-level CLAUDE.md to skip redundant structure discovery
+- **E6: FINAL Output Protocol**: Structured sub-agent output format for reliable deduplication and severity classification
+- **E7: Background Scanning**: Repos with >500 files use `run_in_background: true` for inventory agents
+- **E8: Adaptive Sub-Agent Budgets**: Auto-splits work when scope exceeds 500 files or 50K lines per agent
+- **E9: Binary File Filtering**: Skips 30+ binary extensions from Read and Grep operations
 - Mode escalation (Quick Scan -> Deep Audit when >100 matches detected)
 - Strategy selection matrix mapping task types to optimal strategies
 - Multi-model dispatch table (haiku for scanning, sonnet for analysis, opus for synthesis)
 
 ### Changed
-- Complete rewrite of core skill file (commands/rlm.md) — now 460 lines with all 9 enhancements
+- Complete rewrite of core skill file (commands/rlm.md) - now 460 lines with all 9 enhancements
 - Restructured execution pipeline into Phase 0-5 for Deep Audit
 - README rewritten with full feature documentation
 - IMPLEMENTATION.md rewritten with dual-mode architecture diagrams
